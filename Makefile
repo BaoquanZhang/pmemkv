@@ -26,7 +26,7 @@ uninstall:
 
 bench: configure reset
 	cd ./bin && make pmemkv_bench
-	PMEM_IS_PMEM_FORCE=1 ./bin/pmemkv_bench --histogram=1
+	#PMEM_IS_PMEM_FORCE=1 ./bin/pmemkv_bench --histogram=1
 
 example: configure reset
 	cd ./bin && make pmemkv_example
