@@ -32,6 +32,17 @@
 
 #pragma once
 #include <pthread.h>
+#include <queue>
+#include <set>
+#include <unistd.h>
+/* pmdk headers */
+#include <libpmemobj++/persistent_ptr.hpp>
+#include <libpmemobj++/pool.hpp>
+#include <libpmemobj++/p.hpp>
+#include <libpmemobj++/make_persistent_atomic.hpp>
+#include <libpmemobj++/make_persistent_array_atomic.hpp>
+#include <libpmemobj++/transaction.hpp>
+
 #include "../pmemkv.h"
 
 using namespace std;
@@ -41,16 +52,32 @@ using namespace pmem::obj;
 namespace pmemkv {
 namespace nvlsm {
 
+#define RUN_SIZE 4096
+#define LAYER_DEPTH 4
+#define COM_RATIO 4
 const string ENGINE = "nvlsm";                         // engine identifier
 class KVPair;
-class KVRange;
+class Run;
 class MemTable;
 class NVLsm;
+
+/* PMEM structures */
+struct LSM_Root {                 // persistent root object
+    persistent_ptr<Run> head;   // head of the vector of levels
+};
 
 /* KVRange : range for runs */
 struct KVRange {
     string start_key;
     string end_key;
+};
+
+/* comparator for key range */
+struct RangeComparator {
+    bool operator()(const pair< KVRange, persistent_ptr<Run> > &pair1, 
+            const pair< KVRange, persistent_ptr<Run> > &pair2) const {
+        return pair1.first.start_key <= pair2.first.start_key;
+    }
 };
 
 /* KVPair : key-value pair */
@@ -66,10 +93,9 @@ class KVPair {
 /* MemTable: the write buffer in DRAM */
 class MemTable {
     private:
-        vector<KVPair> * buffer;        // write buffer container
+        Run * buffer;        // write buffer container
         pthread_rwlock_t rwlock;        // rw lock for write/read
-        KVRange * range;
-        queue< pair< vector<KVPair> *, KVRange *> > persist_queue; // persist queue for memtable
+        queue<Run *> persist_queue; // persist queue for memtable
         int buf_size;
     public:
         MemTable(int size);
@@ -82,19 +108,31 @@ class MemTable {
 class MetaTable {
     private:
         pthread_rwlock_t rwlock;
+        set< pair<KVRange, persistent_ptr<Run> >, RangeComparator > ranges;
+        vector< persistent_ptr<Run> > old_run;
+    public:
+        MetaTable();
+        ~MetaTable();
+        void add(vector<persistent_ptr<Run>> runs);
+        void del(vector<persistent_ptr<Run>> runs);
+        bool search(string &key, string &value);
+        void del_data();
 };
 
 /* Run: container for storing kv_pairs on NVM */
 class Run {
     private:
         pthread_rwlock_t rwlock;
-        p<KVPair> array[RUN_SIZE];
+        KVPair array[RUN_SIZE];
         size_t size;
+        KVRange range;
     public:
         Run();
         ~Run();
         size_t getSize();
+        KVRange getRange();
         void write(vector<KVPair> &kv_pairs, size_t len);
+        void append(KVPair &kv_pair);
         bool search(string &req_key, string &req_val);
 };
 

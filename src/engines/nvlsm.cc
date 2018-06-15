@@ -33,11 +33,8 @@
 #include <iostream>
 #include "nvlsm.h"
 
-#define DO_LOG 1
+#define DO_LOG 0
 #define LOG(msg) if (DO_LOG) std::cout << "[nvlsm] " << msg << "\n"
-#define RUN_SIZE 40960
-#define LAYER_DEPTH 4
-#define COM_RATIO 4
 
 namespace pmemkv {
 namespace nvlsm {
@@ -47,7 +44,6 @@ size_t pmsize;
 /* #####################static functions for multiple threads ####################### */
 static void persist(void * v_mem_table) {
     MemTable * mem_table = (MemTable *) v_mem_table;
-
 }
 /* ######################## Implementations for NVLsm #################### */
 NVLsm::NVLsm(const string& path, const size_t size) {
@@ -113,33 +109,43 @@ KVPair::~KVPair() {}
 /* ############## Implementaions for MemTable #################*/
 MemTable::MemTable(int size) 
     : buf_size(size) {
-    buffer = new vector<KVPair>(size);
-    range = new KVRange();
+    buffer = new Run();
     pthread_rwlock_init(&rwlock, NULL);
 }
 
 MemTable::~MemTable() {
     pthread_rwlock_destroy(&rwlock);
     delete buffer;
-    delete range;
+}
+/* append kv pair to write buffer */
+void MemTable::append(KVPair &kv_pair) {
+    buffer->append(kv_pair);
+    if (buffer->getSize() >= RUN_SIZE) {
+        persist_queue.push(buffer);
+        //cout << "persist queue size: " << persist_queue.size() << endl;
+        buffer = new Run();
+    }
 }
 
-/* append: append a kv pair to buffer */
-void MemTable::append(KVPair & kv_pair) {
+/* ################### MetaTable ##################################### */
+MetaTable::MetaTable() {
+    pthread_rwlock_init(&rwlock, NULL);
+}
+
+MetaTable::~MetaTable() {
+    pthread_rwlock_destroy(&rwlock);
+}
+
+/* add new runs into meta_table */
+void MetaTable::add(vector<persistent_ptr<Run>> runs) {
     pthread_rwlock_wrlock(&rwlock);
-    // put kv_pair into buffer
-    buffer->push_back(kv_pair);
-    // update range of buffer 
-    if (range->start_key > kv_pair.key)
-        range->start_key = kv_pair.key;
-    if (range->end_key < kv_pair.key)
-        range->end_key = kv_pair.key;
-    if (buffer->size() == buf_size) {
-        persist_queue.push(make_pair(buffer, range));
-        buffer = new vector<KVPair>(buf_size);
-        range = new KVRange();
+    if (runs.size() == 0) 
+        return;
+    for (auto it : runs) {
+        ranges.emplace(make_pair(it->getRange(), it));
     }
     pthread_rwlock_unlock(&rwlock);
+    return;
 }
 /* #################### Implementations of Run ############################### */
 Run::Run() 
@@ -148,7 +154,11 @@ Run::Run()
 }
 
 Run::~Run() {
-    pthread_rwlock_destory(&rwlock);
+    pthread_rwlock_destroy(&rwlock);
+}
+
+KVRange Run::getRange() {
+    return range;
 }
 
 size_t Run::getSize() {
@@ -163,7 +173,7 @@ void Run::write(vector<KVPair> &kv_pairs, size_t len) {
         array[i].val = kv_pairs[i].val;
     }
     size = len;
-    pthread_rwlock_ulock(&rwlock);
+    pthread_rwlock_unlock(&rwlock);
 }
 
 /* search: binary search kv pairs in a run */
@@ -182,6 +192,23 @@ bool Run::search(string &req_key, string &req_val) {
         }
     }
     return false;
+}
+
+/* append: append a kv pair to run
+ * this will only be called for write buffer 
+ * */
+void Run::append(KVPair & kv_pair) {
+    pthread_rwlock_wrlock(&rwlock);
+    // put kv_pair into buffer
+    array[size].key = kv_pair.key;
+    array[size].val = kv_pair.val;
+    size++;
+    // update range of buffer 
+    if (range.start_key > kv_pair.key)
+        range.start_key = kv_pair.key;
+    if (range.end_key < kv_pair.key)
+        range.end_key = kv_pair.key;
+    pthread_rwlock_unlock(&rwlock);
 }
 } // namespace nvlsm
 } // namespace pmemkv
