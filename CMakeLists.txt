@@ -39,6 +39,10 @@ set(SOURCE_FILES src/pmemkv.cc src/pmemkv.h
     src/engines/versioned_b_tree.h src/engines/versioned_b_tree.cc
     src/engines/versioned_b_tree/persistent_b_tree.h src/engines/versioned_b_tree/pstring.h
     src/engines/nvlsm.h src/engines/nvlsm.cc
+    src/engines/nvlsm/cond_var.h src/engines/nvlsm/cond_var.cc
+    src/engines/nvlsm/mutex.h src/engines/nvlsm/mutex.cc
+    src/engines/nvlsm/task.h src/engines/nvlsm/task.cc
+    src/engines/nvlsm/threadpool.h src/engines/nvlsm/threadpool.cc
 )
 set(3RDPARTY ${PROJECT_SOURCE_DIR}/3rdparty)
 set(GTEST_VERSION 1.7.0)

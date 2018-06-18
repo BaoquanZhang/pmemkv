@@ -9,10 +9,8 @@
 #include <string.h>
 
 #include "global_threadpool.h"
-#include "global_conf.h"
 
 using namespace std;
-using namespace pmem::obj;
 
 //template<class TClass>
 class Task
