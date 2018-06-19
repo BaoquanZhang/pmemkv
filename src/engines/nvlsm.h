@@ -60,6 +60,7 @@ namespace nvlsm {
 #define LAYER_DEPTH 4
 #define COM_RATIO 4
 #define PERSIST_POOL_SIZE 1
+#define COMPACT_POOL_SIZE 1
 const string ENGINE = "nvlsm";                         // engine identifier
 class Run;
 class PRun;
@@ -80,16 +81,32 @@ struct KVRange {
         start_key = start;
         end_key = end;
     }
+
+    bool const operator==(const KVRange &kvrange) const {
+        return  start_key == kvrange.start_key 
+                && end_key == kvrange.end_key;
+    }
+
+    bool const operator<(const KVRange &kvrange) const {
+        return  start_key < kvrange.start_key 
+                || (start_key == kvrange.start_key && end_key < kvrange.end_key);
+    }
+
+    bool const operator>(const KVRange &kvrange) const {
+        return  start_key > kvrange.start_key 
+                || (start_key == kvrange.start_key && end_key > kvrange.end_key);
+    }
 };
 
 /* comparator for key ranges */
+/*
 struct RangeComparator {
     bool operator()(const KVRange &range1, const KVRange &range2) const {
         return range1.start_key <= range2.start_key;
     }
-};
+};*/
 
-/* KVPair : key-value pair */
+/* KVPair : key-value pair in DRAM */
 class KVPair {
     public:
         string key;
@@ -97,6 +114,16 @@ class KVPair {
         KVPair();
         KVPair(string init_key, string init_val);
         ~KVPair();
+};
+
+/* KVPair : persistent key-value pair on NVM */
+class PKVPair {
+    public:
+        persistent_ptr<string> key;
+        persistent_ptr<string> val;
+        PKVPair();
+        PKVPair(string init_key, string init_val);
+        ~PKVPair();
 };
 
 /* comparator for kv pairs */
@@ -115,7 +142,7 @@ class MemTable {
         queue<Run *> persist_queue; // persist queue for memtable
         size_t buf_size;
     public:
-        MemTable(int size);
+        MemTable(int size); // buffer size
         ~MemTable();
         bool append(KVPair &kv_pair);
         void push_queue();
@@ -127,7 +154,7 @@ class MemTable {
 class MetaTable {
     private:
         pthread_rwlock_t rwlock;
-        map<KVRange, persistent_ptr<PRun>, RangeComparator> ranges;
+        map<KVRange, persistent_ptr<PRun>> ranges;
         vector< persistent_ptr<PRun> > old_run;
         size_t next_compact;  // index for the run of the last compaction
     public:
@@ -136,11 +163,12 @@ class MetaTable {
         size_t getSize(); // get the size of ranges
         void add(vector<persistent_ptr<PRun>> runs);
         void add(persistent_ptr<PRun> run);
-        void del(vector<persistent_ptr<Run>> runs);
+        void del(persistent_ptr<PRun> runs);
+        void del(vector<persistent_ptr<PRun>> runs);
         bool search(string &key, string &value);
         void del_data();
         void display();
-        persistent_ptr<PRun> getCompact();
+        persistent_ptr<PRun> getCompact(); // get the run for compaction
         void searchRun(KVRange &range, vector<persistent_ptr<PRun>> &runs);
 };
 
@@ -166,7 +194,7 @@ class Run {
 class PRun {
     private:
         pthread_rwlock_t rwlock;
-        persistent_ptr<KVPair[]> array;
+        persistent_ptr<PKVPair[]> array;
         size_t size;
         KVRange range;
     public:
@@ -174,8 +202,9 @@ class PRun {
         ~PRun();
         size_t getSize();
         KVRange getRange();
-        persistent_ptr<KVPair[]> getArray();
+        persistent_ptr<PKVPair[]> getArray();
         void write(Run &run);
+        void append(PKVPair &kv_pair);
         bool search(string &req_key, string &req_val);
 };
 
@@ -185,16 +214,20 @@ class CompactionUnit {
         size_t index;   // index for the current component   
         persistent_ptr<PRun> up_run;
         vector< persistent_ptr<PRun> > low_runs;
+        vector< persistent_ptr<PRun> > new_runs;
+        CompactionUnit();
+        ~CompactionUnit();
         void display();
 };
 
 class NVLsm : public KVEngine {
     private:
         ThreadPool * persist_pool;
+        ThreadPool * compact_pool;
+    public:
         size_t run_size;                                     // the number of kv pairs
         size_t layer_depth;
         size_t com_ratio;
-    public:
         NVLsm(const string& path, const size_t size);        // default constructor
         ~NVLsm();                                          // default destructor
         // internal structure
@@ -202,7 +235,8 @@ class NVLsm : public KVEngine {
         vector<MetaTable> meta_table;
         // utility
         CompactionUnit * plan_compaction(size_t index);
-
+        void merge_sort(CompactionUnit * unit);
+        void displayMeta();
         // public interface
         string Engine() final { return ENGINE; }               // engine identifier
         KVStatus Get(int32_t limit,                            // copy value to fixed-size buffer
