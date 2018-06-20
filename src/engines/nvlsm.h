@@ -37,6 +37,7 @@
 #include <map>
 #include <unistd.h>
 #include <algorithm>
+#include <mutex>
 /* thread pool headers */
 #include "nvlsm/threadpool.h"
 /* pmdk headers */
@@ -61,6 +62,7 @@ namespace nvlsm {
 #define COM_RATIO 4
 #define PERSIST_POOL_SIZE 1
 #define COMPACT_POOL_SIZE 1
+#define SLOW_DOWN_US 1000
 const string ENGINE = "nvlsm";                         // engine identifier
 class Run;
 class PRun;
@@ -98,14 +100,6 @@ struct KVRange {
     }
 };
 
-/* comparator for key ranges */
-/*
-struct RangeComparator {
-    bool operator()(const KVRange &range1, const KVRange &range2) const {
-        return range1.start_key <= range2.start_key;
-    }
-};*/
-
 /* KVPair : key-value pair in DRAM */
 class KVPair {
     public:
@@ -114,6 +108,17 @@ class KVPair {
         KVPair();
         KVPair(string init_key, string init_val);
         ~KVPair();
+        bool const operator==(const KVPair &kvpair) const {
+            return  key == kvpair.key;
+        }
+
+        bool const operator<(const KVPair &kvpair) const {
+            return  key < kvpair.key; 
+        }
+
+        bool const operator>(const KVPair &kvpair) const {
+            return  key > kvpair.key; 
+        }
 };
 
 /* KVPair : persistent key-value pair on NVM */
@@ -124,15 +129,27 @@ class PKVPair {
         PKVPair();
         PKVPair(string init_key, string init_val);
         ~PKVPair();
+        bool const operator==(const PKVPair &kvpair) const {
+            return  key == kvpair.key; 
+        }
+
+        bool const operator<(const PKVPair &kvpair) const {
+            return  key < kvpair.key; 
+        }
+
+        bool const operator>(const PKVPair &kvpair) const {
+            return  key > kvpair.key; 
+        }
 };
 
 /* comparator for kv pairs */
+/*
 struct PairComparator {
     bool operator()(const KVPair &pair1, const KVPair &pair2) {
         return pair1.key <= pair2.key;
     }
 };
-
+*/
 
 /* MemTable: the write buffer in DRAM */
 class MemTable {
@@ -144,6 +161,7 @@ class MemTable {
     public:
         MemTable(int size); // buffer size
         ~MemTable();
+        size_t getSize(); // get queue size
         bool append(KVPair &kv_pair);
         void push_queue();
         Run * pop_queue();
@@ -235,6 +253,7 @@ class NVLsm : public KVEngine {
         vector<MetaTable> meta_table;
         // utility
         CompactionUnit * plan_compaction(size_t index);
+        void compact(int index);
         void merge_sort(CompactionUnit * unit);
         void displayMeta();
         // public interface

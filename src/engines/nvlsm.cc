@@ -41,29 +41,27 @@ namespace nvlsm {
 
 pool<LSM_Root> pmpool;
 size_t pmsize;
+static void compact(void * v_nvlsm);
 /* #####################static functions for multiple threads ####################### */
 /* persist: persist a mem_table to c0
  * v_nvlsm: an instance of nvlsm
  * */
 static void persist(void * v_nvlsm) {
-    //cout << "persistted a mem_table!" << endl;
+    cout << "persisting a mem_table!" << endl;
     NVLsm * nvlsm = (NVLsm *) v_nvlsm;
+    // get the targeting meta_table[0] 
+    auto meta_table = &(nvlsm->meta_table[0]);
     // get the queue head from mem_table
     auto mem_table = nvlsm->mem_table;
     auto run = mem_table->pop_queue();
-    // get the targeting meta_table[0] 
-    if (nvlsm->meta_table.size() == 0) {
-        MetaTable new_tbl;
-        nvlsm->meta_table.push_back(new_tbl);
-    }
-    auto meta_table = &(nvlsm->meta_table[0]);
     // allocate space from NVM and copy data from mem_table
     persistent_ptr<PRun> persist_run;
     make_persistent_atomic<PRun>(pmpool, persist_run);
     persist_run->write(*run);
     meta_table->add(persist_run);
     delete run;
-    //nvlsm->meta_table[0].display();
+    nvlsm->compact(0);
+    cout << "persist stop" << endl;
 }
 
 /* ####################### compaction function ###########################
@@ -73,11 +71,13 @@ static void compact(void * v_nvlsm) {
     NVLsm * nvlsm = (NVLsm *) v_nvlsm;
     // start to compact
     int comp_index = 0;
+    cout << "start compaction " << endl;
     while (true) {
         int comp_size = nvlsm->meta_table.size();
         int current_size = nvlsm->meta_table[comp_index].getSize();
         int max_size = (comp_index + 1) * nvlsm->com_ratio;
-        if (current_size <= max_size)
+        cout << "current_size: " << current_size << " max size:" << max_size << endl;
+        if (current_size < max_size)
             break;
         // plan a compaction for the component i
         if (comp_size == comp_index + 1) {
@@ -97,6 +97,7 @@ static void compact(void * v_nvlsm) {
         comp_index++;
         nvlsm->displayMeta();
     }
+    cout << "stop compactiom" << endl;
 }
 
 /* ######################### CompactionUnit ############################# */
@@ -117,6 +118,13 @@ void CompactionUnit::display() {
         end_key = it->getRange().end_key;
         cout << "<" << start_key << "," << end_key << "> ";
     }
+    cout << "new runs: ";
+    for (auto it : new_runs) {
+        start_key = it->getRange().start_key;
+        end_key = it->getRange().end_key;
+        cout << "<" << start_key << "," << end_key << "> ";
+    }
+
     cout << endl;
     return;
 }
@@ -128,7 +136,7 @@ NVLsm::NVLsm(const string& path, const size_t size) {
     com_ratio = COM_RATIO;
     // create a mem_table
     mem_table = new MemTable(run_size);
-    // reserve space for the meta_table of 10 components 
+    // reserve space for the meta_table of first components 
     meta_table.emplace_back();
     // Create/Open pmem pool
     if (access(path.c_str(), F_OK) != 0) {
@@ -183,18 +191,16 @@ KVStatus NVLsm::Put(const string& key, const string& value) {
     KVPair kv_pair(key, value);
     if (mem_table->append(kv_pair)) {
         // write buffer is filled up
+        // if queue size is larger than 4, wait
+        while (mem_table->getSize() >= com_ratio)
+            usleep(SLOW_DOWN_US); 
         mem_table->push_queue();
+        cout << "memTable: " << mem_table->getSize() << endl; 
         Task * persist_task = new Task(&persist, (void *) this);
         persist_pool->add_task(persist_task);
+        cout << "started a persist thread " << endl;
     }
 
-    if (meta_table[0].getSize() > com_ratio) {
-        if (meta_table.size() == 1) {
-            meta_table.emplace_back();
-        }
-        Task * compact_task = new Task(&compact, (void *) this);
-        compact_pool->add_task(compact_task);
-    }
     return OK;
 }
 
@@ -215,6 +221,34 @@ CompactionUnit * NVLsm::plan_compaction(size_t index) {
     return unit;
 }
 
+void NVLsm::compact(int comp_index) {
+    cout << "start compaction " << endl;
+    int comp_count = meta_table.size();
+    int current_size = meta_table[comp_index].getSize();
+    int max_size = (comp_index + 1) * com_ratio;
+    if (current_size > max_size) {
+        cout << "current_size: " << current_size << " max size:" << max_size << endl;
+        // plan a compaction for the component i
+        if (comp_count == comp_index + 1) {
+            meta_table.emplace_back();
+        }
+        auto unit = plan_compaction(comp_index);
+        // merge sort the runs
+        merge_sort(unit);
+        // delete the old meta data
+        meta_table[comp_index].del(unit->up_run);
+        meta_table[comp_index + 1].del(unit->low_runs);
+        // add new meta data
+        meta_table[comp_index + 1].add(unit->new_runs);
+        unit->display();
+        // delete the old data
+        delete unit;
+        displayMeta();
+        compact(comp_index + 1);
+    }
+    cout << "stop compactiom" << endl;
+}
+
 /* merge_sort: merge sort the runs during a compaction */
 void NVLsm::merge_sort(CompactionUnit * unit) {
     auto up_run = unit->up_run;
@@ -224,7 +258,6 @@ void NVLsm::merge_sort(CompactionUnit * unit) {
         unit->new_runs.push_back(up_run);
         return;
     }
-
     persistent_ptr<PRun> new_run;
     make_persistent_atomic<PRun>(pmpool, new_run);
     int low_index = 0;
@@ -312,6 +345,12 @@ MemTable::~MemTable() {
     delete buffer;
 }
 
+/* getSize: return the queue size 
+ * */
+size_t MemTable::getSize() {
+    return persist_queue.size();
+}
+
 /* push_que: push the write buffer to the persist queue
  *           and allocate a new buffer
  * */
@@ -384,6 +423,8 @@ void MetaTable::add(vector<persistent_ptr<PRun>> runs) {
 
 void MetaTable::add(persistent_ptr<PRun> run) {
     pthread_rwlock_wrlock(&rwlock);
+    if (run == NULL)
+        return;
     ranges.emplace(run->getRange(), run);
     pthread_rwlock_unlock(&rwlock);
     return;
@@ -397,7 +438,7 @@ void MetaTable::del(persistent_ptr<PRun> run) {
     //cout << kvrange.start_key << " " << kvrange.end_key << endl;
     int count = 0;
     count += ranges.erase(run->getRange());
-    cout << "erase " << count << " out of 1" << endl;
+    //cout << "erase " << count << " out of 1" << endl;
     pthread_rwlock_unlock(&rwlock);
 }
 
@@ -407,7 +448,7 @@ void MetaTable::del(vector<persistent_ptr<PRun>> runs) {
     for (auto run : runs) { 
         count += ranges.erase(run->getRange());
     }
-    cout << "erase " << count << " out of " << runs.size() << endl;
+    //cout << "erase " << count << " out of " << runs.size() << endl;
     pthread_rwlock_unlock(&rwlock);
 }
 
@@ -439,11 +480,12 @@ void MetaTable::searchRun(KVRange &kvrange, vector<persistent_ptr<PRun>> &runs) 
         if (range.end_key >= kvrange.start_key)
             runs.push_back(it_low->second);
         it_low++;
-        while (it_low != it_high) {
+        while (it_low != it_high && it_low != ranges.end()) {
             runs.push_back(it_low->second);
             it_low++;
         }
     }
+    cout << "search done, low_run " << runs.size() << endl;
     pthread_rwlock_unlock(&rwlock);
     return;
 }
@@ -508,7 +550,7 @@ void Run::append(KVPair & kv_pair) {
 
 /* sort_array: sort the kv array before it is persisted to NVM */
 void Run::sort_array() {
-    sort(array, array + size, PairComparator());
+    sort(array, array + size);
     return;
 }
 
@@ -533,7 +575,6 @@ size_t PRun::getSize() {
 }
 
 persistent_ptr<PKVPair[]> PRun::getArray() {
-    pthread_rwlock_rdlock(&rwlock);
     return array;
 }
 
