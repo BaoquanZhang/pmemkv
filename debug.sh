@@ -1,2 +1,2 @@
-PMEM_IS_PMEM_FORCE=1 ./bin/pmemkv_bench --histogram=0 --db=/mnt/pmem/nvlsm/pmemkv.pool --engine=nvlsm --num=100000 --value_size=128 --db_size_in_gb=2 --benchmarks=fillrandom
+PMEM_IS_PMEM_FORCE=1 ./bin/pmemkv_bench --histogram=0 --db=/mnt/pmem/nvlsm/pmemkv.pool --engine=nvlsm --num=1000000 --value_size=128 --db_size_in_gb=20 --benchmarks=fillrandom
 

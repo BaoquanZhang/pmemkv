@@ -57,12 +57,12 @@ using namespace pmem::obj;
 namespace pmemkv {
 namespace nvlsm {
 
-#define RUN_SIZE 4096
+#define RUN_SIZE 14400
 #define LAYER_DEPTH 4
 #define COM_RATIO 4
 #define PERSIST_POOL_SIZE 1
 #define COMPACT_POOL_SIZE 1
-#define SLOW_DOWN_US 1000
+#define SLOW_DOWN_US 2
 const string ENGINE = "nvlsm";                         // engine identifier
 class Run;
 class PRun;
@@ -90,8 +90,9 @@ struct KVRange {
     }
 
     bool const operator<(const KVRange &kvrange) const {
-        return  start_key < kvrange.start_key 
+        return  start_key < kvrange.start_key
                 || (start_key == kvrange.start_key && end_key < kvrange.end_key);
+    
     }
 
     bool const operator>(const KVRange &kvrange) const {
@@ -178,6 +179,7 @@ class MetaTable {
     public:
         MetaTable();
         ~MetaTable();
+        mutex * compact_mutex; // compaction mutex
         size_t getSize(); // get the size of ranges
         void add(vector<persistent_ptr<PRun>> runs);
         void add(persistent_ptr<PRun> run);

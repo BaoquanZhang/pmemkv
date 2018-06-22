@@ -41,13 +41,12 @@ namespace nvlsm {
 
 pool<LSM_Root> pmpool;
 size_t pmsize;
-static void compact(void * v_nvlsm);
 /* #####################static functions for multiple threads ####################### */
 /* persist: persist a mem_table to c0
  * v_nvlsm: an instance of nvlsm
  * */
 static void persist(void * v_nvlsm) {
-    cout << "persisting a mem_table!" << endl;
+    //cout << "persisting a mem_table!" << endl;
     NVLsm * nvlsm = (NVLsm *) v_nvlsm;
     // get the targeting meta_table[0] 
     auto meta_table = &(nvlsm->meta_table[0]);
@@ -61,12 +60,13 @@ static void persist(void * v_nvlsm) {
     meta_table->add(persist_run);
     delete run;
     nvlsm->compact(0);
-    cout << "persist stop" << endl;
+    //cout << "persist stop" << endl;
 }
 
 /* ####################### compaction function ###########################
  * v_nvlsm: an instance of nvlsm
  * */
+/*
 static void compact(void * v_nvlsm) {
     NVLsm * nvlsm = (NVLsm *) v_nvlsm;
     // start to compact
@@ -83,22 +83,27 @@ static void compact(void * v_nvlsm) {
         if (comp_size == comp_index + 1) {
             nvlsm->meta_table.emplace_back();
         }
+        cout << "planning a compaction "<< endl;
         auto unit = nvlsm->plan_compaction(comp_index);
         // merge sort the runs
+        cout << "merge sorting " << endl;
         nvlsm->merge_sort(unit);
         // delete the old meta data
+        cout << "deleting old meta " << endl;
         nvlsm->meta_table[comp_index].del(unit->up_run);
         nvlsm->meta_table[comp_index + 1].del(unit->low_runs);
         // add new meta data
+        cout << "adding new data " << endl;
         nvlsm->meta_table[comp_index + 1].add(unit->new_runs);
         // delete the old data
-        //unit->display();
+        unit->display();
         delete unit;
         comp_index++;
         nvlsm->displayMeta();
     }
     cout << "stop compactiom" << endl;
 }
+*/
 
 /* ######################### CompactionUnit ############################# */
 CompactionUnit::CompactionUnit(){}
@@ -124,7 +129,6 @@ void CompactionUnit::display() {
         end_key = it->getRange().end_key;
         cout << "<" << start_key << "," << end_key << "> ";
     }
-
     cout << endl;
     return;
 }
@@ -167,6 +171,9 @@ NVLsm::NVLsm(const string& path, const size_t size) {
 }
 
 NVLsm::~NVLsm() {
+    while (mem_table->getSize() > 0)
+        usleep(500);
+    displayMeta();
     persist_pool->destroy_threadpool();
     delete mem_table;
     delete persist_pool;
@@ -189,18 +196,19 @@ KVStatus NVLsm::Get(const string& key, string* value) {
 KVStatus NVLsm::Put(const string& key, const string& value) {
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
     KVPair kv_pair(key, value);
+    //if (mem_table->getSize() > com_ratio)
+    //    usleep(SLOW_DOWN_US); 
     if (mem_table->append(kv_pair)) {
         // write buffer is filled up
         // if queue size is larger than 4, wait
-        while (mem_table->getSize() >= com_ratio)
-            usleep(SLOW_DOWN_US); 
         mem_table->push_queue();
-        cout << "memTable: " << mem_table->getSize() << endl; 
+
+        
+        //cout << "memTable: " << mem_table->getSize() << endl; 
         Task * persist_task = new Task(&persist, (void *) this);
         persist_pool->add_task(persist_task);
-        cout << "started a persist thread " << endl;
+        //cout << "started a persist thread " << endl;
     }
-
     return OK;
 }
 
@@ -222,31 +230,38 @@ CompactionUnit * NVLsm::plan_compaction(size_t index) {
 }
 
 void NVLsm::compact(int comp_index) {
-    cout << "start compaction " << endl;
+    // cout << "start compaction " << endl;
     int comp_count = meta_table.size();
     int current_size = meta_table[comp_index].getSize();
-    int max_size = (comp_index + 1) * com_ratio;
+    int max_size = 0;
+    if (comp_index == 0 || comp_index == 1) 
+        max_size = com_ratio;
+    else
+        max_size = (int) pow(com_ratio, comp_index);
     if (current_size > max_size) {
-        cout << "current_size: " << current_size << " max size:" << max_size << endl;
+        //cout << "current_size: " << current_size << " max size:" << max_size << endl;
         // plan a compaction for the component i
         if (comp_count == comp_index + 1) {
             meta_table.emplace_back();
+            displayMeta();
         }
+        //cout << "planing a compaction" << endl;
         auto unit = plan_compaction(comp_index);
         // merge sort the runs
+        //cout << "merge sorting " << endl;
         merge_sort(unit);
         // delete the old meta data
         meta_table[comp_index].del(unit->up_run);
         meta_table[comp_index + 1].del(unit->low_runs);
         // add new meta data
         meta_table[comp_index + 1].add(unit->new_runs);
-        unit->display();
+        //unit->display();
         // delete the old data
         delete unit;
-        displayMeta();
+        //displayMeta();
         compact(comp_index + 1);
     }
-    cout << "stop compactiom" << endl;
+    //cout << "stop compactiom" << endl;
 }
 
 /* merge_sort: merge sort the runs during a compaction */
@@ -296,6 +311,11 @@ void NVLsm::merge_sort(CompactionUnit * unit) {
             }
         }
     }
+    if (new_run->getSize() > 0)
+        unit->new_runs.push_back(new_run);
+    else
+        delete_persistent_atomic<PRun>(new_run);
+    return;
 }
 
 /* display the meta tables */
@@ -355,7 +375,6 @@ size_t MemTable::getSize() {
  *           and allocate a new buffer
  * */
 void MemTable::push_queue() {
-    buffer->sort_array();
     persist_queue.push(buffer);
     //cout << "persist queue size: " << persist_queue.size() << endl;
     buffer = new Run();
@@ -384,10 +403,12 @@ bool MemTable::append(KVPair &kv_pair) {
 /* ################### MetaTable ##################################### */
 MetaTable::MetaTable() : next_compact(0) {
     ranges.clear();
+    compact_mutex = new mutex();
     pthread_rwlock_init(&rwlock, NULL);
 }
 
 MetaTable::~MetaTable() {
+    //delete compact_mutex;
     pthread_rwlock_destroy(&rwlock);
 }
 
@@ -399,12 +420,10 @@ size_t MetaTable::getSize() {
 /* display: show the current elements */
 void MetaTable::display() {
     cout << ranges.size() << endl;
-    /*
     for (auto it : ranges) {
         cout << "<" << it.first.start_key << "," << it.first.end_key << ">";
         cout << "(" << it.second->getSize() << ") ";
     }
-    */
     cout << endl;
     return;
 }
@@ -468,6 +487,7 @@ void MetaTable::searchRun(KVRange &kvrange, vector<persistent_ptr<PRun>> &runs) 
     if (ranges.empty())
         return;
     pthread_rwlock_rdlock(&rwlock);
+    // binary search for component i > 1
     KVRange start_range(kvrange.start_key, kvrange.start_key);
     KVRange end_range(kvrange.end_key, kvrange.end_key);
     //cout << "kvrange:" << kvrange.start_key << "," << kvrange.end_key << endl;
@@ -475,17 +495,25 @@ void MetaTable::searchRun(KVRange &kvrange, vector<persistent_ptr<PRun>> &runs) 
     auto it_low = ranges.lower_bound(start_range);
     auto it_high = ranges.upper_bound(end_range);
     //cout << "mark" << endl;
-    if (it_low != ranges.end()) {
-        auto range = it_low->first;
-        if (range.end_key >= kvrange.start_key)
-            runs.push_back(it_low->second);
+    if (it_low != ranges.begin()) {
+        it_low--;
+    }
+    
+    auto range = it_low->first;
+    if (kvrange.start_key <= range.end_key) {
+        runs.push_back(it_low->second);
         it_low++;
-        while (it_low != it_high && it_low != ranges.end()) {
+    }
+
+    while (it_low != it_high && it_low != ranges.end()) {
+        if (kvrange.start_key <= range.end_key) {
             runs.push_back(it_low->second);
             it_low++;
+        } else {
+            break;
         }
     }
-    cout << "search done, low_run " << runs.size() << endl;
+    //cout << "search done, low_run " << runs.size() << endl;
     pthread_rwlock_unlock(&rwlock);
     return;
 }
@@ -537,9 +565,28 @@ bool Run::search(string &req_key, string &req_val) {
 void Run::append(KVPair & kv_pair) {
     pthread_rwlock_wrlock(&rwlock);
     // put kv_pair into buffer
-    array[size].key = kv_pair.key;
-    array[size].val = kv_pair.val;
-    size++;
+    int i = 0;
+    bool update_flag = false;
+    while (i < size) {
+        if (array[i].key == kv_pair.key) { 
+            // in-place update from equal keys
+            array[i].val = kv_pair.val;
+            update_flag = true;
+            break;
+        } else {
+            // swap for larger key
+            array[i].key.swap(kv_pair.key);
+            array[i].val.swap(kv_pair.val);
+        }
+        i++;
+    }
+
+    if (!update_flag) {
+        array[i].key = kv_pair.key;
+        array[i].val = kv_pair.val;
+        size++;
+    }
+
     // update range of buffer 
     if (range.start_key.empty() || range.start_key > kv_pair.key)
         range.start_key = kv_pair.key;
