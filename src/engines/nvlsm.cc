@@ -53,13 +53,25 @@ static void persist(void * v_nvlsm) {
     // get the queue head from mem_table
     auto mem_table = nvlsm->mem_table;
     auto run = mem_table->pop_queue();
+    //cout << "range of memory buffer :";
     // allocate space from NVM and copy data from mem_table
     persistent_ptr<PRun> persist_run;
     make_persistent_atomic<PRun>(pmpool, persist_run);
-    persist_run->write(*run);
+    auto p_array = persist_run->array;
+    int i = 0;
+    for (auto it = run->kv.begin(); it != run->kv.end(); it++, i++) {
+        strncpy(p_array[i].kv, it->second.c_str(), KEY_SIZE + VAL_SIZE);
+    }
+    persist_run->size = i;
+    persist_run->range.start_key.assign(run->range.start_key);
+    persist_run->range.end_key.assign(run->range.end_key);
+    //cout << "persisted range: ";
+    //persist_run->range.display();
+    // add meta data to component 0
     meta_table->add(persist_run);
     delete run;
-    nvlsm->compact(0);
+    if (meta_table->ranges.size() > nvlsm->com_ratio)
+        nvlsm->compact(0);
     //cout << "persist stop" << endl;
 }
 
@@ -114,19 +126,19 @@ CompactionUnit::~CompactionUnit(){
         delete_persistent_atomic<PRun>(low_runs[i]);
 }
 void CompactionUnit::display() {
-    auto start_key = up_run->getRange().start_key;
-    auto end_key = up_run->getRange().end_key;
+    auto start_key = up_run->range.start_key;
+    auto end_key = up_run->range.end_key;
     cout << "up run:" << "<" << start_key << "," << end_key << ">" << endl;
     cout << "low runs: ";
     for (auto it : low_runs) {
-        start_key = it->getRange().start_key;
-        end_key = it->getRange().end_key;
+        start_key = it->range.start_key;
+        end_key = it->range.end_key;
         cout << "<" << start_key << "," << end_key << "> ";
     }
     cout << "new runs: ";
     for (auto it : new_runs) {
-        start_key = it->getRange().start_key;
-        end_key = it->getRange().end_key;
+        start_key = it->range.start_key;
+        end_key = it->range.end_key;
         cout << "<" << start_key << "," << end_key << "> ";
     }
     cout << endl;
@@ -195,15 +207,12 @@ KVStatus NVLsm::Get(const string& key, string* value) {
 
 KVStatus NVLsm::Put(const string& key, const string& value) {
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
-    KVPair kv_pair(key, value);
-    //if (mem_table->getSize() > com_ratio)
-    //    usleep(SLOW_DOWN_US); 
-    if (mem_table->append(kv_pair)) {
+    while (mem_table->getSize() > com_ratio)
+        usleep(SLOW_DOWN_US); 
+    if (mem_table->append(key, value)) {
         // write buffer is filled up
         // if queue size is larger than 4, wait
         mem_table->push_queue();
-
-        
         //cout << "memTable: " << mem_table->getSize() << endl; 
         Task * persist_task = new Task(&persist, (void *) this);
         persist_pool->add_task(persist_task);
@@ -223,14 +232,14 @@ CompactionUnit * NVLsm::plan_compaction(size_t index) {
     unit->index = index;
     unit->up_run = meta_table[index].getCompact(); 
     if (meta_table.size() > index && meta_table[index + 1].getSize() > 0) {
-        auto range = unit->up_run->getRange();
+        auto range = unit->up_run->range;
         meta_table[index + 1].searchRun(range, unit->low_runs);
     }
     return unit;
 }
 
 void NVLsm::compact(int comp_index) {
-    // cout << "start compaction " << endl;
+    //cout << "start compaction " << endl;
     int comp_count = meta_table.size();
     int current_size = meta_table[comp_index].getSize();
     int max_size = 0;
@@ -239,11 +248,12 @@ void NVLsm::compact(int comp_index) {
     else
         max_size = (int) pow(com_ratio, comp_index);
     if (current_size > max_size) {
+        //int start_s = clock();
         //cout << "current_size: " << current_size << " max size:" << max_size << endl;
         // plan a compaction for the component i
         if (comp_count == comp_index + 1) {
             meta_table.emplace_back();
-            displayMeta();
+            //displayMeta();
         }
         //cout << "planing a compaction" << endl;
         auto unit = plan_compaction(comp_index);
@@ -258,63 +268,108 @@ void NVLsm::compact(int comp_index) {
         //unit->display();
         // delete the old data
         delete unit;
-        //displayMeta();
+        displayMeta();
         compact(comp_index + 1);
+        //int stop_s=clock();
+        //cout << "time: " << (stop_s - start_s) / double(CLOCKS_PER_SEC) * 1000 << endl;
     }
     //cout << "stop compactiom" << endl;
 }
 
 /* merge_sort: merge sort the runs during a compaction */
 void NVLsm::merge_sort(CompactionUnit * unit) {
+    auto meta_up = &(meta_table[unit->index]);
+    auto meta_low = &(meta_table[unit->index + 1]);
+    // acquire two locks
+    // follow the strick order to avoid deadlock
+    pthread_rwlock_rdlock(&(meta_up->rwlock));
+    pthread_rwlock_rdlock(&(meta_low->rwlock));
     auto up_run = unit->up_run;
     auto low_runs = unit->low_runs;
     // if no runs from lower component 
     if (low_runs.empty()) {
         unit->new_runs.push_back(up_run);
+        pthread_rwlock_unlock(&(meta_up->rwlock));
+        pthread_rwlock_unlock(&(meta_low->rwlock));
         return;
     }
     persistent_ptr<PRun> new_run;
     make_persistent_atomic<PRun>(pmpool, new_run);
     int low_index = 0;
     int up_index = 0;
-    auto up_len = up_run->getSize();
-    auto up_array = up_run->getArray();
+    int new_index = 0;
+    auto up_len = up_run->size;
+    auto up_array = up_run->array;
 
     for (auto low_run : low_runs) {
-        auto low_array = low_run->getArray();
-        auto low_len = low_run->getSize();
+        auto low_array = low_run->array;
+        auto low_len = low_run->size;
         low_index = 0;
         while (low_index < low_len) {
+            auto low_kv = low_array[low_index].kv;
             if (up_index < up_len) {
                 // if up run has kv pairs
-                auto up_key = up_array[up_index].key;
-                auto res = up_key->compare(*(low_array[low_index].key));
+                auto up_kv = up_array[up_index].kv;
+                auto res = strncmp(up_kv, low_kv, KEY_SIZE);
                 if (res <= 0) {
                     // up key is smaller 
-                    new_run->append(up_array[up_index]);
+                    strncpy(new_run->array[new_index].kv, up_kv, KEY_SIZE + VAL_SIZE);
                     up_index++;
                     if (res == 0)
                         low_index++;
                 } else {
                     // low key is smaller
-                    new_run->append(low_array[low_index]);
+                    strncpy(new_run->array[new_index].kv, low_kv, KEY_SIZE + VAL_SIZE);
                     low_index++;
                 }
             } else {
                 // if up key has no kv pairs
-                new_run->append(low_array[low_index]);
+                strncpy(new_run->array[new_index].kv, low_kv, KEY_SIZE + VAL_SIZE);
                 low_index++;
             }
-            if (new_run->getSize() == RUN_SIZE) {
+
+            new_index++;
+
+            if (new_index == RUN_SIZE) {
+                new_run->range.start_key.assign(new_run->array[0].kv, KEY_SIZE);
+                new_run->range.end_key.assign(new_run->array[new_index - 1].kv, KEY_SIZE);
+                new_run->size = RUN_SIZE;
                 unit->new_runs.push_back(new_run);
                 make_persistent_atomic<PRun>(pmpool, new_run);
+                new_index = 0;
             }
         }
     }
-    if (new_run->getSize() > 0)
+
+    // run out of low but up remains
+    while (up_index < up_len) {
+        auto up_kv = up_array[up_index].kv;
+        strncpy(new_run->array[new_index].kv, up_kv, KEY_SIZE + VAL_SIZE);
+        up_index++;
+        new_index++;
+        if (new_index == RUN_SIZE) {
+            new_run->range.start_key.assign(new_run->array[0].kv, KEY_SIZE);
+            new_run->range.end_key.assign(new_run->array[new_index - 1].kv, KEY_SIZE);
+            new_run->size = RUN_SIZE;
+            unit->new_runs.push_back(new_run);
+            make_persistent_atomic<PRun>(pmpool, new_run);
+            new_index = 0;
+        }
+    }
+
+    // run out of both up and low but new is not filled up
+    if (new_index > 0 && new_index < RUN_SIZE) {
+        new_run->range.start_key.assign(new_run->array[0].kv, KEY_SIZE);
+        new_run->range.end_key.assign(new_run->array[new_index - 1].kv, KEY_SIZE);
+        new_run->size = new_index;
+        //new_run->range.display();
         unit->new_runs.push_back(new_run);
-    else
+    } else {
         delete_persistent_atomic<PRun>(new_run);
+    }
+
+    pthread_rwlock_unlock(&(meta_up->rwlock));
+    pthread_rwlock_unlock(&(meta_low->rwlock));
     return;
 }
 
@@ -327,30 +382,6 @@ void NVLsm::displayMeta() {
         component.display();
     }
     cout << "=========== end displaying meta table ========" << endl;
-}
-
-/* ############## KVPair ###################*/
-KVPair::KVPair() {}
-
-KVPair::KVPair(string init_key, string init_val) 
-    : key(init_key), val(init_val) {}
-
-KVPair::~KVPair() {}
-
-/* ############## PKVPair ###################*/
-PKVPair::PKVPair() {
-    make_persistent_atomic<string>(pmpool, key);
-    make_persistent_atomic<string>(pmpool, val);
-}
-
-PKVPair::PKVPair(string init_key, string init_val) {
-    make_persistent_atomic<string>(pmpool, key, init_key);
-    make_persistent_atomic<string>(pmpool, val, init_val);
-}
-
-PKVPair::~PKVPair() {
-    delete_persistent_atomic<string>(key);
-    delete_persistent_atomic<string>(val);
 }
 
 /* ############## MemTable #################*/
@@ -392,9 +423,9 @@ Run * MemTable::pop_queue() {
  * return: true - the write buffer is filled up
  *         false - the write buffer still has space 
  * */
-bool MemTable::append(KVPair &kv_pair) {
-    buffer->append(kv_pair);
-    if (buffer->getSize() >= RUN_SIZE) {
+bool MemTable::append(const string & key, const string &val) {
+    buffer->append(key, val);
+    if (buffer->size >= RUN_SIZE) {
         return true;
     }
     return false;
@@ -422,7 +453,7 @@ void MetaTable::display() {
     cout << ranges.size() << endl;
     for (auto it : ranges) {
         cout << "<" << it.first.start_key << "," << it.first.end_key << ">";
-        cout << "(" << it.second->getSize() << ") ";
+        cout << "(" << it.second->size << ") ";
     }
     cout << endl;
     return;
@@ -434,7 +465,7 @@ void MetaTable::add(vector<persistent_ptr<PRun>> runs) {
     if (runs.size() == 0) 
         return;
     for (auto it : runs) {
-        ranges.emplace(it->getRange(), it);
+        ranges.emplace(it->range, it);
     }
     pthread_rwlock_unlock(&rwlock);
     return;
@@ -444,7 +475,7 @@ void MetaTable::add(persistent_ptr<PRun> run) {
     pthread_rwlock_wrlock(&rwlock);
     if (run == NULL)
         return;
-    ranges.emplace(run->getRange(), run);
+    ranges.emplace(run->range, run);
     pthread_rwlock_unlock(&rwlock);
     return;
 }
@@ -452,11 +483,11 @@ void MetaTable::add(persistent_ptr<PRun> run) {
 /* delete run/runs from the metadata */
 void MetaTable::del(persistent_ptr<PRun> run) {
     pthread_rwlock_wrlock(&rwlock);
-    auto kvrange = run->getRange();
+    auto kvrange = run->range;
     //cout << "deleting key range:";
     //cout << kvrange.start_key << " " << kvrange.end_key << endl;
     int count = 0;
-    count += ranges.erase(run->getRange());
+    count += ranges.erase(run->range);
     //cout << "erase " << count << " out of 1" << endl;
     pthread_rwlock_unlock(&rwlock);
 }
@@ -465,7 +496,7 @@ void MetaTable::del(vector<persistent_ptr<PRun>> runs) {
     pthread_rwlock_wrlock(&rwlock);
     int count = 0;
     for (auto run : runs) { 
-        count += ranges.erase(run->getRange());
+        count += ranges.erase(run->range);
     }
     //cout << "erase " << count << " out of " << runs.size() << endl;
     pthread_rwlock_unlock(&rwlock);
@@ -528,77 +559,36 @@ Run::~Run() {
     pthread_rwlock_destroy(&rwlock);
 }
 
-KVRange Run::getRange() {
-    return range;
-}
-
-size_t Run::getSize() {
-    return size;
-}
-
-KVPair * Run::getArray() {
-    return array;
-}
-
-
 /* search: binary search kv pairs in a run */
 bool Run::search(string &req_key, string &req_val) {
-    int start = 0;
-    int end = size - 1;
-    while (start <= end) {
-        int mid = start + (end - start) / 2;
-        if (array[mid].key == req_key) {
-            req_val = array[mid].val;
-            return true;
-        } else if (array[mid].key < req_key) {
-            start = mid + 1;
-        } else {
-            end = mid - 1;
-        }
+    pthread_rwlock_rdlock(&rwlock);
+    auto it = kv.find(req_key);
+    if (it != kv.end()) {
+        req_val = it->second;
+        pthread_rwlock_unlock(&rwlock);
+        return true;
     }
+    pthread_rwlock_unlock(&rwlock);
     return false;
 }
 
 /* append: append a kv pair to run
  * this will only be called for write buffer 
  * */
-void Run::append(KVPair & kv_pair) {
+void Run::append(const string &key, const string &val) {
     pthread_rwlock_wrlock(&rwlock);
     // put kv_pair into buffer
-    int i = 0;
-    bool update_flag = false;
-    while (i < size) {
-        if (array[i].key == kv_pair.key) { 
-            // in-place update from equal keys
-            array[i].val = kv_pair.val;
-            update_flag = true;
-            break;
-        } else {
-            // swap for larger key
-            array[i].key.swap(kv_pair.key);
-            array[i].val.swap(kv_pair.val);
-        }
-        i++;
-    }
-
-    if (!update_flag) {
-        array[i].key = kv_pair.key;
-        array[i].val = kv_pair.val;
+    auto it = kv.find(key);
+    if (it == kv.end()) {
         size++;
     }
-
+    kv[key] = key + val;
     // update range of buffer 
-    if (range.start_key.empty() || range.start_key > kv_pair.key)
-        range.start_key = kv_pair.key;
-    if (range.end_key.empty() || range.end_key < kv_pair.key)
-        range.end_key = kv_pair.key;
+    if (range.start_key.empty() || range.start_key > key)
+        range.start_key.assign(key);
+    if (range.end_key.empty() || range.end_key < key)
+        range.end_key.assign(key);
     pthread_rwlock_unlock(&rwlock);
-}
-
-/* sort_array: sort the kv array before it is persisted to NVM */
-void Run::sort_array() {
-    sort(array, array + size);
-    return;
 }
 
 /* #################### PRun ############################### */
@@ -613,60 +603,17 @@ PRun::~PRun() {
     pthread_rwlock_destroy(&rwlock);
 }
 
-KVRange PRun::getRange() {
-    return range;
-}
-
-size_t PRun::getSize() {
-    return size;
-}
-
-persistent_ptr<PKVPair[]> PRun::getArray() {
-    return array;
-}
-
-/* append: append a kv pair to run
- * this will only be called for compaction
- * */
-void PRun::append(PKVPair & kv_pair) {
-    pthread_rwlock_wrlock(&rwlock);
-    // put kv_pair into buffer
-    array[size].key->assign(*(kv_pair.key));
-    array[size].val->assign(*(kv_pair.val));
-    size++;
-    // update range of buffer 
-    if (range.start_key.empty() || range.start_key.compare(*(kv_pair.key)) > 0)
-        range.start_key = *(kv_pair.key);
-    if (range.end_key.empty() || range.end_key.compare(*(kv_pair.key)) < 0)
-        range.end_key = *(kv_pair.key);
-    pthread_rwlock_unlock(&rwlock);
-}
-
-/* write: persist kv pairs to NVM */
-void PRun::write(Run &run) {
-    //cout << "persisting run to NVM" << endl;
-    pthread_rwlock_wrlock(&rwlock);
-    auto kv_pairs = run.getArray();
-    int len = run.getSize();
-    for (int i = 0; i < len; i++) {
-        array[i].key->assign(kv_pairs[i].key);
-        array[i].val->assign(kv_pairs[i].val);
-    }
-    size = len;
-    range = run.getRange();
-    pthread_rwlock_unlock(&rwlock);
-}
-
 /* search: binary search kv pairs in a run */
 bool PRun::search(string &req_key, string &req_val) {
     int start = 0;
     int end = size - 1;
     while (start <= end) {
         int mid = start + (end - start) / 2;
-        if (array[mid].key->compare(req_key) == 0) {
-            req_val = *array[mid].val;
+        int res = strncmp(array[mid].kv, req_key.c_str(), KEY_SIZE);
+        if (res == 0) {
+            req_val.assign(array[mid].kv, KEY_SIZE, VAL_SIZE);
             return true;
-        } else if (array[mid].key->compare(req_key) < 0) {
+        } else if (res < 0) {
             start = mid + 1;
         } else {
             end = mid - 1;

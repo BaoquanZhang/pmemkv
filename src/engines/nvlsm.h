@@ -38,6 +38,8 @@
 #include <unistd.h>
 #include <algorithm>
 #include <mutex>
+#include <ctime>
+#include <string>
 /* thread pool headers */
 #include "nvlsm/threadpool.h"
 /* pmdk headers */
@@ -58,6 +60,8 @@ namespace pmemkv {
 namespace nvlsm {
 
 #define RUN_SIZE 14400
+#define KEY_SIZE 16
+#define VAL_SIZE 128
 #define LAYER_DEPTH 4
 #define COM_RATIO 4
 #define PERSIST_POOL_SIZE 1
@@ -66,6 +70,7 @@ namespace nvlsm {
 const string ENGINE = "nvlsm";                         // engine identifier
 class Run;
 class PRun;
+class PKVPair;
 class MemTable;
 class NVLsm;
 
@@ -99,58 +104,52 @@ struct KVRange {
         return  start_key > kvrange.start_key 
                 || (start_key == kvrange.start_key && end_key > kvrange.end_key);
     }
-};
 
-/* KVPair : key-value pair in DRAM */
-class KVPair {
-    public:
-        string key;
-        string val;
-        KVPair();
-        KVPair(string init_key, string init_val);
-        ~KVPair();
-        bool const operator==(const KVPair &kvpair) const {
-            return  key == kvpair.key;
-        }
-
-        bool const operator<(const KVPair &kvpair) const {
-            return  key < kvpair.key; 
-        }
-
-        bool const operator>(const KVPair &kvpair) const {
-            return  key > kvpair.key; 
-        }
-};
-
-/* KVPair : persistent key-value pair on NVM */
-class PKVPair {
-    public:
-        persistent_ptr<string> key;
-        persistent_ptr<string> val;
-        PKVPair();
-        PKVPair(string init_key, string init_val);
-        ~PKVPair();
-        bool const operator==(const PKVPair &kvpair) const {
-            return  key == kvpair.key; 
-        }
-
-        bool const operator<(const PKVPair &kvpair) const {
-            return  key < kvpair.key; 
-        }
-
-        bool const operator>(const PKVPair &kvpair) const {
-            return  key > kvpair.key; 
-        }
-};
-
-/* comparator for kv pairs */
-/*
-struct PairComparator {
-    bool operator()(const KVPair &pair1, const KVPair &pair2) {
-        return pair1.key <= pair2.key;
+    void display() {
+        cout << " " << start_key << "," << end_key << endl;
     }
 };
-*/
+
+/* Run: container for storing kv_pairs on DRAM*/
+class Run {
+    public:
+        pthread_rwlock_t rwlock;
+        map<string, string> kv;
+        size_t size;
+        KVRange range;
+        Run();
+        ~Run();
+        void append(const string &key, const string& val);
+        bool search(string &req_key, string &req_val);
+};
+
+/* PKVPair : persistent key-value pair on NVM */
+struct PKVPair {
+    char kv[KEY_SIZE + VAL_SIZE];
+    bool const operator==(const PKVPair &kvpair) const {
+        return  strncmp(kv, kvpair.kv, KEY_SIZE) == 0; 
+    }
+
+    bool const operator<(const PKVPair &kvpair) const {
+        return  strncmp(kv, kvpair.kv, KEY_SIZE) < 0; 
+    }
+
+    bool const operator>(const PKVPair &kvpair) const {
+        return  strncmp(kv, kvpair.kv, KEY_SIZE) > 0; 
+    }
+};
+
+/* Run: container for storing kv_pairs on DRAM*/
+class PRun {
+    public:
+        PRun();
+        ~PRun();
+        persistent_ptr<PKVPair[]> array;
+        pthread_rwlock_t rwlock;
+        size_t size;
+        KVRange range;
+        bool search(string &req_key, string &req_val);
+};
 
 /* MemTable: the write buffer in DRAM */
 class MemTable {
@@ -163,7 +162,7 @@ class MemTable {
         MemTable(int size); // buffer size
         ~MemTable();
         size_t getSize(); // get queue size
-        bool append(KVPair &kv_pair);
+        bool append(const string &key, const string &val);
         void push_queue();
         Run * pop_queue();
         string search(string key);
@@ -171,12 +170,11 @@ class MemTable {
 
 /* Metadata table for sorted runs */
 class MetaTable {
-    private:
-        pthread_rwlock_t rwlock;
-        map<KVRange, persistent_ptr<PRun>> ranges;
-        vector< persistent_ptr<PRun> > old_run;
-        size_t next_compact;  // index for the run of the last compaction
     public:
+        pthread_rwlock_t rwlock;
+        size_t next_compact;  // index for the run of the last compaction
+        vector< persistent_ptr<PRun> > old_run;
+        map<KVRange, persistent_ptr<PRun>> ranges;
         MetaTable();
         ~MetaTable();
         mutex * compact_mutex; // compaction mutex
@@ -192,41 +190,7 @@ class MetaTable {
         void searchRun(KVRange &range, vector<persistent_ptr<PRun>> &runs);
 };
 
-/* Run: container for storing kv_pairs on DRAM*/
-class Run {
-    private:
-        pthread_rwlock_t rwlock;
-        KVPair array[RUN_SIZE];
-        size_t size;
-        KVRange range;
-    public:
-        Run();
-        ~Run();
-        size_t getSize();
-        KVRange getRange();
-        KVPair* getArray();
-        void append(KVPair &kv_pair);
-        bool search(string &req_key, string &req_val);
-        void sort_array();
-};
 
-/* Run: container for storing kv_pairs on DRAM*/
-class PRun {
-    private:
-        pthread_rwlock_t rwlock;
-        persistent_ptr<PKVPair[]> array;
-        size_t size;
-        KVRange range;
-    public:
-        PRun();
-        ~PRun();
-        size_t getSize();
-        KVRange getRange();
-        persistent_ptr<PKVPair[]> getArray();
-        void write(Run &run);
-        void append(PKVPair &kv_pair);
-        bool search(string &req_key, string &req_val);
-};
 
 /* the basic unit of a compaction */
 class CompactionUnit {
