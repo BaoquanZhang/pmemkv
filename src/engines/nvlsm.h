@@ -125,17 +125,66 @@ class Run {
 
 /* PKVPair : persistent key-value pair on NVM */
 struct PKVPair {
-    char kv[KEY_SIZE + VAL_SIZE];
+    persistent_ptr<char[]> kv;
+    p<size_t> len;
     bool const operator==(const PKVPair &kvpair) const {
-        return  strncmp(kv, kvpair.kv, KEY_SIZE) == 0; 
+        for (int i = 0; i < KEY_SIZE; i++) {
+            if (kv[i] != kvpair.kv[i])
+                return false;
+        } 
+        return true;
     }
 
     bool const operator<(const PKVPair &kvpair) const {
-        return  strncmp(kv, kvpair.kv, KEY_SIZE) < 0; 
+        for (int i = 0; i < KEY_SIZE; i++) {
+            if (kv[i] == kvpair.kv[i])
+                continue;
+            else if (kv[i] < kvpair.kv[i])
+                return true;
+            else 
+                return false;
+        } 
+        return false;
     }
 
     bool const operator>(const PKVPair &kvpair) const {
-        return  strncmp(kv, kvpair.kv, KEY_SIZE) > 0; 
+        for (int i = 0; i < KEY_SIZE; i++) {
+            if (kv[i] == kvpair.kv[i])
+                continue;
+            else if (kv[i] > kvpair.kv[i])
+                return true;
+            else 
+                return false;
+        } 
+        return false;
+    }
+
+    void copy(persistent_ptr<char[]> src_kv, size_t len) {
+        for (int i = 0; i < len; i++) {
+            kv[i] = src_kv[i];
+        }
+        return;
+    }
+
+    void copy(const char* src_kv, size_t len) {
+        for (int i = 0; i < len; i++) {
+            kv[i] = src_kv[i];
+        }
+        return;
+    }
+
+    void getData(string &str) {
+        str.resize(len);
+        for (int i = 0; i < len; i++) {
+            str.at(i) = kv[i];
+        }
+    }
+
+    void getKey(string &str) {
+        str.resize(KEY_SIZE);
+        for (int i = 0; i < KEY_SIZE; i++) {
+            str.at(i) = kv[i];
+        }
     }
 };
 
@@ -145,10 +194,9 @@ class PRun {
         PRun();
         ~PRun();
         persistent_ptr<PKVPair[]> array;
-        pthread_rwlock_t rwlock;
-        size_t size;
-        KVRange range;
+        p<size_t> size;
         bool search(string &req_key, string &req_val);
+        void getRange(KVRange &range);
 };
 
 /* MemTable: the write buffer in DRAM */
