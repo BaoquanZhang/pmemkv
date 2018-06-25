@@ -181,13 +181,13 @@ class MetaTable {
         size_t getSize(); // get the size of ranges
         void add(vector<persistent_ptr<PRun>> runs);
         void add(persistent_ptr<PRun> run);
-        void del(persistent_ptr<PRun> runs);
-        void del(vector<persistent_ptr<PRun>> runs);
-        bool search(string &key, string &value);
+        bool del(persistent_ptr<PRun> runs);
+        bool del(vector<persistent_ptr<PRun>> runs);
+        void search(string &key, string &value);
+        void search(KVRange &range, vector<persistent_ptr<PRun>> &runs);
         void del_data();
         void display();
         persistent_ptr<PRun> getCompact(); // get the run for compaction
-        void searchRun(KVRange &range, vector<persistent_ptr<PRun>> &runs);
 };
 
 
