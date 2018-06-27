@@ -62,6 +62,7 @@ namespace nvlsm {
 #define RUN_SIZE 14400
 #define KEY_SIZE 16
 #define VAL_SIZE 128
+#define PAIR_SIZE (KEY_SIZE + VAL_SIZE)
 #define LAYER_DEPTH 4
 #define COM_RATIO 4
 #define PERSIST_POOL_SIZE 1
@@ -123,34 +124,6 @@ class Run {
         bool search(string &req_key, string &req_val);
 };
 
-/* PKVPair : persistent key-value pair on NVM */
-struct PKVPair {
-    char kv[KEY_SIZE + VAL_SIZE];
-    bool const operator==(const PKVPair &kvpair) const {
-        return  strncmp(kv, kvpair.kv, KEY_SIZE) == 0; 
-    }
-
-    bool const operator<(const PKVPair &kvpair) const {
-        return  strncmp(kv, kvpair.kv, KEY_SIZE) < 0; 
-    }
-
-    bool const operator>(const PKVPair &kvpair) const {
-        return  strncmp(kv, kvpair.kv, KEY_SIZE) > 0; 
-    }
-};
-
-/* Run: container for storing kv_pairs on DRAM*/
-class PRun {
-    public:
-        PRun();
-        ~PRun();
-        persistent_ptr<PKVPair[]> array;
-        pthread_rwlock_t rwlock;
-        size_t size;
-        KVRange range;
-        bool search(string &req_key, string &req_val);
-};
-
 /* MemTable: the write buffer in DRAM */
 class MemTable {
     private:
@@ -165,7 +138,7 @@ class MemTable {
         bool append(const string &key, const string &val);
         void push_queue();
         Run * pop_queue();
-        string search(string key);
+        bool search(const string &key, string &val);
 };
 
 /* Metadata table for sorted runs */
@@ -173,21 +146,21 @@ class MetaTable {
     public:
         pthread_rwlock_t rwlock;
         size_t next_compact;  // index for the run of the last compaction
-        vector< persistent_ptr<PRun> > old_run;
-        map<KVRange, persistent_ptr<PRun>> ranges;
+        vector<persistent_ptr<char[]>> old_run;
+        map<KVRange, pair<int, persistent_ptr<char[]>>> ranges;
         MetaTable();
         ~MetaTable();
-        mutex * compact_mutex; // compaction mutex
         size_t getSize(); // get the size of ranges
-        void add(vector<persistent_ptr<PRun>> runs);
-        void add(persistent_ptr<PRun> run);
-        bool del(persistent_ptr<PRun> runs);
-        bool del(vector<persistent_ptr<PRun>> runs);
-        void search(string &key, string &value);
-        void search(KVRange &range, vector<persistent_ptr<PRun>> &runs);
+        void add(vector<pair<int, persistent_ptr<char[]>>> runs);
+        void add(pair<int, persistent_ptr<char[]>> run);
+        bool del(pair<int, persistent_ptr<char[]>> runs);
+        bool del(vector<pair<int, persistent_ptr<char[]>>> runs);
+        bool search(const string &key, string &value); // search a key in components > 0
+        bool seq_search(const string &key, string &value); // search a key in component 0
+        void search(KVRange &range, vector<pair<int, persistent_ptr<char[]>>> &runs);
         void del_data();
         void display();
-        persistent_ptr<PRun> getCompact(); // get the run for compaction
+        pair<int, persistent_ptr<char[]>> getCompact(); // get the run for compaction
 };
 
 
@@ -196,9 +169,9 @@ class MetaTable {
 class CompactionUnit {
     public:
         size_t index;   // index for the current component   
-        persistent_ptr<PRun> up_run;
-        vector< persistent_ptr<PRun> > low_runs;
-        vector< persistent_ptr<PRun> > new_runs;
+        pair<int, persistent_ptr<char[]>> up_run;
+        vector<pair<int, persistent_ptr<char[]>>> low_runs;
+        vector<pair<int, persistent_ptr<char[]>>> new_runs;
         CompactionUnit();
         ~CompactionUnit();
         void display();
