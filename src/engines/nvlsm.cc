@@ -54,16 +54,18 @@ static void persist(void * v_nvlsm) {
     auto mem_table = nvlsm->mem_table;
     auto run = mem_table->pop_queue();
     // allocate space from NVM and copy data from mem_table
-    persistent_ptr<char[]> kv;
+    persistent_ptr<PRun> p_run;
     int i = 0;
-    make_persistent_atomic<char[]>(pmpool, kv, RUN_SIZE * PAIR_SIZE);
+    make_persistent_atomic<PRun>(pmpool, p_run);
+    auto kv = p_run->kv;
     for (auto it = run->kv.begin(); it != run->kv.end(); it++) {
         strncpy(&kv[i * PAIR_SIZE], it->second.c_str(), PAIR_SIZE);
         i++;
     }
-    //cout << "persisted range: ";
+    p_run->size = i;
     // add meta data to component 0
-    meta_table->add(make_pair(run->size, kv));
+    p_run.persist();
+    meta_table->add(p_run);
     delete run;
     if (meta_table->ranges.size() > nvlsm->com_ratio)
         nvlsm->compact(0);
@@ -118,32 +120,32 @@ CompactionUnit::~CompactionUnit(){
     //delete old data
     if (low_runs.size() == 0)
         return;
-    delete_persistent_atomic<char[]>(up_run.second, RUN_SIZE * PAIR_SIZE);
+    delete_persistent_atomic<PRun>(up_run);
     for(int i = 0; i < low_runs.size(); i++) {
-        delete_persistent_atomic<char[]>(low_runs[i].second, RUN_SIZE * PAIR_SIZE);
+        delete_persistent_atomic<PRun>(low_runs[i]);
     }
 }
 
 void CompactionUnit::display() {
     string start_key;
     string end_key;
-    auto kv = up_run.second;
-    int size = up_run.first;
+    auto kv = up_run->kv;
+    int size = up_run->size;
     start_key.assign(&kv[0], KEY_SIZE);
     end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
     cout << "up run:" << "<" << start_key << "," << end_key << ">" << endl;
     cout << "low runs: ";
     for (auto low_run : low_runs) {
-        kv = low_run.second;
-        size = low_run.first;
+        kv = low_run->kv;
+        size = low_run->size;
         start_key.assign(&kv[0], KEY_SIZE);
         end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
         cout << "<" << start_key << "," << end_key << "> ";
     }
     cout << "new runs: ";
     for (auto new_run : new_runs) {
-        kv = new_run.second;
-        size = new_run.first;
+        kv = new_run->kv;
+        size = new_run->size;
         start_key.assign(&kv[0], KEY_SIZE);
         end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
         cout << "<" << start_key << "," << end_key << "> ";
@@ -157,10 +159,6 @@ NVLsm::NVLsm(const string& path, const size_t size) {
     run_size = RUN_SIZE;
     layer_depth = LAYER_DEPTH;
     com_ratio = COM_RATIO;
-    // create a mem_table
-    mem_table = new MemTable(run_size);
-    // reserve space for the meta_table of first components 
-    meta_table.emplace_back();
     // Create/Open pmem pool
     if (access(path.c_str(), F_OK) != 0) {
         LOG("Creating filesystem pool, path=" << path << ", size=" << to_string(size));
@@ -180,6 +178,10 @@ NVLsm::NVLsm(const string& path, const size_t size) {
         cout << "Fail to initialize the thread pool!" << endl;
         exit(-1);
     }
+    // create a mem_table
+    mem_table = new MemTable(run_size);
+    // reserve space for the meta_table of first components 
+    meta_table.emplace_back();
     // create the thread pool for compacting runs
     compact_pool = new ThreadPool(COMPACT_POOL_SIZE);
     if (compact_pool->initialize_threadpool() == -1) {
@@ -264,8 +266,8 @@ CompactionUnit * NVLsm::plan_compaction(size_t index) {
     unit->index = index;
     unit->up_run = meta_table[index].getCompact(); 
     if (meta_table.size() > index && meta_table[index + 1].getSize() > 0) {
-        int size = unit->up_run.first;
-        auto kv = unit->up_run.second;
+        int size = unit->up_run->size;
+        auto kv = unit->up_run->kv;
         KVRange range;
         range.start_key.assign(&kv[0], KEY_SIZE);
         range.end_key.assign(&kv[PAIR_SIZE * (size - 1)]);
@@ -330,17 +332,17 @@ void NVLsm::merge_sort(CompactionUnit * unit) {
     }
 
     unit->new_runs.emplace_back();
-    make_persistent_atomic<char[]>(pmpool, unit->new_runs.back().second, RUN_SIZE * PAIR_SIZE);
-    auto new_kv = unit->new_runs.back().second;
+    make_persistent_atomic<PRun>(pmpool, unit->new_runs.back());
+    auto new_kv = unit->new_runs.back()->kv;
     int low_index = 0;
     int up_index = 0;
     int new_index = 0;
-    auto up_len = up_run.first;
-    auto up_kv = up_run.second;
+    auto up_len = up_run->size;
+    auto up_kv = up_run->kv;
 
     for (auto low_run : low_runs) {
-        auto low_kv = low_run.second;
-        auto low_len = low_run.first;
+        auto low_kv = low_run->kv;
+        auto low_len = low_run->size;
         low_index = 0;
         while (low_index < low_len) {
             if (up_index < up_len) {
@@ -364,10 +366,11 @@ void NVLsm::merge_sort(CompactionUnit * unit) {
             }
             new_index++;
             if (new_index == RUN_SIZE) {
-                unit->new_runs.back().first = new_index;
+                unit->new_runs.back()->size = new_index;
+                unit->new_runs.back().persist();
                 unit->new_runs.emplace_back();
-                make_persistent_atomic<char[]>(pmpool, unit->new_runs.back().second, RUN_SIZE * PAIR_SIZE);
-                new_kv = unit->new_runs.back().second;
+                make_persistent_atomic<PRun>(pmpool, unit->new_runs.back());
+                new_kv = unit->new_runs.back()->kv;
                 new_index = 0;
             }
         }
@@ -379,18 +382,19 @@ void NVLsm::merge_sort(CompactionUnit * unit) {
         up_index++;
         new_index++;
         if (new_index == RUN_SIZE) {
-            unit->new_runs.back().first = new_index;
+            unit->new_runs.back()->size = new_index;
+            unit->new_runs.back().persist();
             unit->new_runs.emplace_back();
-            make_persistent_atomic<char[]>(pmpool, unit->new_runs.back().second, RUN_SIZE * PAIR_SIZE);
-            new_kv = unit->new_runs.back().second;
+            make_persistent_atomic<PRun>(pmpool, unit->new_runs.back());
+            new_kv = unit->new_runs.back()->kv;
             new_index = 0;
         }
     }
     /* run out of both up and low but new is not filled up */
     if (new_index > 0 && new_index < RUN_SIZE) {
-        unit->new_runs.back().first = new_index;
+        unit->new_runs.back()->size = new_index;
     } else if (new_index == 0) {
-        delete_persistent_atomic<char[]>(unit->new_runs.back().second, RUN_SIZE * PAIR_SIZE);
+        delete_persistent_atomic<PRun>(unit->new_runs.back());
         unit->new_runs.pop_back();
     }
     pthread_rwlock_unlock(&(meta_up->rwlock));
@@ -413,11 +417,14 @@ void NVLsm::displayMeta() {
 MemTable::MemTable(int size) 
     : buf_size(size) {
     buffer = new Run();
+    make_persistent_atomic<PRun>(pmpool, kvlog);
     pthread_rwlock_init(&rwlock, NULL);
 }
 
 MemTable::~MemTable() {
     pthread_rwlock_destroy(&rwlock);
+    delete_persistent_atomic<PRun>(kvlog);
+    kvlog->size = 0;
     delete buffer;
 }
 
@@ -450,6 +457,7 @@ Run * MemTable::pop_queue() {
  * */
 bool MemTable::append(const string & key, const string &val) {
     buffer->append(key, val);
+    kvlog->append(key, val);
     if (buffer->size >= RUN_SIZE) {
         return true;
     }
@@ -488,9 +496,9 @@ void MetaTable::display() {
     cout << ranges.size() << endl;
     for (auto it : ranges) {
         cout << "<" << it.first.start_key << "," << it.first.end_key << ">";
-        cout << "(" << it.second.first << ") ";
-        auto kv = it.second.second;
-        int size = it.second.first;
+        cout << "(" << it.second->size << ") ";
+        auto kv = it.second->kv;
+        int size = it.second->size;
         if (strncmp(it.first.start_key.c_str(), &kv[0], KEY_SIZE) != 0
                 || strncmp(it.first.end_key.c_str(), &kv[PAIR_SIZE * (size - 1)], KEY_SIZE) != 0) {
             cout << "kvrange inconsistent! " << endl;
@@ -510,15 +518,15 @@ void MetaTable::display() {
 }
 
 /* add: add new runs into meta_table */
-void MetaTable::add(vector<pair<int, persistent_ptr<char[]>>> runs) {
+void MetaTable::add(vector<persistent_ptr<PRun>> runs) {
     pthread_rwlock_wrlock(&rwlock);
     if (runs.size() == 0) {
         pthread_rwlock_unlock(&rwlock);
         return;
     }
     for (auto it : runs) {
-        auto kv = it.second;
-        int size = it.first;
+        auto kv = it->kv;
+        int size = it->size;
         KVRange kvrange;
         kvrange.start_key.assign(&kv[0], KEY_SIZE);
         kvrange.end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
@@ -528,10 +536,10 @@ void MetaTable::add(vector<pair<int, persistent_ptr<char[]>>> runs) {
     return;
 }
 
-void MetaTable::add(pair<int, persistent_ptr<char[]>> run) {
+void MetaTable::add(persistent_ptr<PRun> run) {
     pthread_rwlock_wrlock(&rwlock);
-    auto kv = run.second;
-    int size = run.first;
+    auto kv = run->kv;
+    int size = run->size;
     KVRange kvrange;
     kvrange.start_key.assign(&kv[0], KEY_SIZE);
     kvrange.end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
@@ -541,11 +549,11 @@ void MetaTable::add(pair<int, persistent_ptr<char[]>> run) {
 }
 
 /* delete run/runs from the metadata */
-bool MetaTable::del(pair<int, persistent_ptr<char[]>> run) {
+bool MetaTable::del(persistent_ptr<PRun> run) {
     pthread_rwlock_wrlock(&rwlock);
     int count = 0;
-    auto kv = run.second;
-    auto size = run.first;
+    auto kv = run->kv;
+    auto size = run->size;
     KVRange kvrange;
     kvrange.start_key.assign(&kv[0], KEY_SIZE);
     kvrange.end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
@@ -561,12 +569,12 @@ bool MetaTable::del(pair<int, persistent_ptr<char[]>> run) {
     return true;
 }
 
-bool MetaTable::del(vector<pair<int, persistent_ptr<char[]>>> runs) {
+bool MetaTable::del(vector<persistent_ptr<PRun>> runs) {
     pthread_rwlock_wrlock(&rwlock);
     int count = 0;
     for (auto run : runs) {
-        auto kv = run.second;
-        auto size = run.first;
+        auto kv = run->kv;
+        auto size = run->size;
         KVRange kvrange;
         kvrange.start_key.assign(&kv[0], KEY_SIZE);
         kvrange.end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
@@ -588,7 +596,7 @@ bool MetaTable::del(vector<pair<int, persistent_ptr<char[]>>> runs) {
 }
 
 /* get a run for compaction */
-pair<int, persistent_ptr<char[]>> MetaTable::getCompact() {
+persistent_ptr<PRun> MetaTable::getCompact() {
     auto it = ranges.begin();
     advance(it, next_compact);
     auto run = it->second;
@@ -599,7 +607,7 @@ pair<int, persistent_ptr<char[]>> MetaTable::getCompact() {
 }
 
 /* search: get all run within a kv range */
-void MetaTable::search(KVRange &kvrange, vector<pair<int, persistent_ptr<char[]>>> &runs) {
+void MetaTable::search(KVRange &kvrange, vector<persistent_ptr<PRun>> &runs) {
     if (ranges.empty())
         return;
     pthread_rwlock_rdlock(&rwlock);
@@ -639,13 +647,13 @@ void MetaTable::search(KVRange &kvrange, vector<pair<int, persistent_ptr<char[]>
 /* search for a key in a component > 0 */
 bool MetaTable::search(const string &key, string &val) {
     KVRange range(key, key);
-    vector<pair<int, persistent_ptr<char[]>>> runs;
+    vector<persistent_ptr<PRun>> runs;
     search(range, runs);
     pthread_rwlock_rdlock(&rwlock);
     for (auto run : runs) {
         int start = 0;
-        int end = run.first - 1;
-        auto kv = run.second;
+        int end = run->size - 1;
+        auto kv = run->kv;
         //string start_key;
         //string end_key;
         //start_key.assign(&kv[0], KEY_SIZE);
@@ -681,8 +689,8 @@ bool MetaTable::seq_search(const string &key, string &val) {
         if (key > range.first.end_key || key < range.first.start_key)
             continue;
         int start = 0;
-        int end = range.second.first - 1;
-        auto kv = range.second.second;
+        int end = range.second->size - 1;
+        auto kv = range.second->kv;
         //string start_key;
         //string end_key;
         //start_key.assign(&kv[0], KEY_SIZE);
@@ -709,6 +717,22 @@ bool MetaTable::seq_search(const string &key, string &val) {
     return false;
 }
 
+/* ###################### PRun ######################### */
+void PRun::append(const string &key, const string &val) {
+    string str = key + val;
+    auto proot = pmpool.get_root();
+    try {
+        // take locks and start a transaction
+        transaction::exec_tx(pmpool, [&]() {
+                strncpy(&kv[PAIR_SIZE * size], str.c_str(), PAIR_SIZE);
+                }, proot->pmutex, proot->shared_pmutex);
+    } catch (pmem::transaction_error &te) {
+
+    }
+    size++;
+    if (size == RUN_SIZE)
+        size = 0;
+}
 /* #################### Implementations of Run ############################### */
 Run::Run() 
     : size(0) {
