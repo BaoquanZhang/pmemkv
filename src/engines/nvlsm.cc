@@ -182,6 +182,7 @@ NVLsm::NVLsm(const string& path, const size_t size) {
     mem_table = new MemTable(run_size);
     // reserve space for the meta_table of first components 
     meta_table.emplace_back();
+    make_persistent_atomic<PRun>(pmpool, meta_log);
     // create the thread pool for compacting runs
     compact_pool = new ThreadPool(COMPACT_POOL_SIZE);
     if (compact_pool->initialize_threadpool() == -1) {
@@ -196,6 +197,7 @@ NVLsm::~NVLsm() {
         usleep(500);
     displayMeta();
     persist_pool->destroy_threadpool();
+    delete_persistent_atomic<PRun>(meta_log);
     delete mem_table;
     delete persist_pool;
     LOG("Closing persistent pool");
@@ -294,7 +296,8 @@ void NVLsm::compact(int comp_index) {
         /* merge sort the runs */
         merge_sort(unit);
         /* delete the old meta data */
-        LOG("deleting old meta data ");
+        LOG("deleting old meta data");
+        meta_log->append("delete", "old meta data");
         if (!(meta_table[comp_index].del(unit->up_run))) {
             cout << "delete meta " << comp_index << " error! " << endl; 
             unit->display();
@@ -305,8 +308,10 @@ void NVLsm::compact(int comp_index) {
             unit->display();
             exit(1);
         }
-        LOG("adding new  meta data");
+        LOG("adding new meta data");
+        meta_log->append("add", "new metadata");
         meta_table[comp_index + 1].add(unit->new_runs);
+        meta_log->append("commit", "compaction");
         LOG("deleting old data");
         delete unit;
         compact(comp_index + 1);
@@ -724,7 +729,7 @@ void PRun::append(const string &key, const string &val) {
     try {
         // take locks and start a transaction
         transaction::exec_tx(pmpool, [&]() {
-                strncpy(&kv[PAIR_SIZE * size], str.c_str(), PAIR_SIZE);
+                strncpy(&kv[PAIR_SIZE * size], str.c_str(), str.size());
                 }, proot->pmutex, proot->shared_pmutex);
     } catch (pmem::transaction_error &te) {
 
@@ -775,38 +780,5 @@ void Run::append(const string &key, const string &val) {
     pthread_rwlock_unlock(&rwlock);
 }
 
-/* #################### PRun ############################### */
-/*
-PRun::PRun() 
-    : size(0) {
-    pthread_rwlock_init(&rwlock, NULL);
-    make_persistent_atomic<PKVPair[]>(pmpool, array, RUN_SIZE);
-}
-
-PRun::~PRun() {
-    delete_persistent_atomic<PKVPair[]>(array, RUN_SIZE);
-    pthread_rwlock_destroy(&rwlock);
-}
-*/
-/* search: binary search kv pairs in a run */
-/*
-bool PRun::search(string &req_key, string &req_val) {
-    int start = 0;
-    int end = size - 1;
-    while (start <= end) {
-        int mid = start + (end - start) / 2;
-        int res = strncmp(array[mid].kv, req_key.c_str(), KEY_SIZE);
-        if (res == 0) {
-            req_val.assign(array[mid].kv, KEY_SIZE, VAL_SIZE);
-            return true;
-        } else if (res < 0) {
-            start = mid + 1;
-        } else {
-            end = mid - 1;
-        }
-    }
-    return false;
-}
-*/
 } // namespace nvlsm
 } // namespace pmemkv

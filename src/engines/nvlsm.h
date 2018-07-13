@@ -203,6 +203,7 @@ class NVLsm : public KVEngine {
         // internal structure
         MemTable * mem_table;
         vector<MetaTable> meta_table;
+        persistent_ptr<PRun> meta_log; // log for meta table
         // utility
         CompactionUnit * plan_compaction(size_t index);
         void compact(int index);
