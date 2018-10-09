@@ -72,48 +72,6 @@ static void persist(void * v_nvlsm) {
     //cout << "persist stop" << endl;
 }
 
-/* ####################### compaction function ###########################
- * v_nvlsm: an instance of nvlsm
- * */
-/*
-static void compact(void * v_nvlsm) {
-    NVLsm * nvlsm = (NVLsm *) v_nvlsm;
-    // start to compact
-    int comp_index = 0;
-    cout << "start compaction " << endl;
-    while (true) {
-        int comp_size = nvlsm->meta_table.size();
-        int current_size = nvlsm->meta_table[comp_index].getSize();
-        int max_size = (comp_index + 1) * nvlsm->com_ratio;
-        cout << "current_size: " << current_size << " max size:" << max_size << endl;
-        if (current_size < max_size)
-            break;
-        // plan a compaction for the component i
-        if (comp_size == comp_index + 1) {
-            nvlsm->meta_table.emplace_back();
-        }
-        cout << "planning a compaction "<< endl;
-        auto unit = nvlsm->plan_compaction(comp_index);
-        // merge sort the runs
-        cout << "merge sorting " << endl;
-        nvlsm->merge_sort(unit);
-        // delete the old meta data
-        cout << "deleting old meta " << endl;
-        nvlsm->meta_table[comp_index].del(unit->up_run);
-        nvlsm->meta_table[comp_index + 1].del(unit->low_runs);
-        // add new meta data
-        cout << "adding new data " << endl;
-        nvlsm->meta_table[comp_index + 1].add(unit->new_runs);
-        // delete the old data
-        unit->display();
-        delete unit;
-        comp_index++;
-        nvlsm->displayMeta();
-    }
-    cout << "stop compactiom" << endl;
-}
-*/
-
 /* ######################### CompactionUnit ############################# */
 CompactionUnit::CompactionUnit(){}
 CompactionUnit::~CompactionUnit(){
@@ -226,14 +184,14 @@ KVStatus NVLsm::Get(const string& key, string* value) {
         //cout << ": searchng in compoent " << i << endl;
         if (i == 0) {
             if (meta_table[i].seq_search(key, val)) {
-                value = new string(val);
+                value->append(val);
                 //cout << "get success" << endl;
                 return OK;
             }
         } else {
             if (meta_table[i].search(key, val)) {
                 //cout << "get success" << endl;
-                value = new string(val);
+                value->append(val);
                 return OK;
             }
         }
@@ -611,41 +569,30 @@ persistent_ptr<PRun> MetaTable::getCompact() {
     return run;
 }
 
-/* search: get all run within a kv range */
+/* search: get all run within a kv range and store them in runs */
 void MetaTable::search(KVRange &kvrange, vector<persistent_ptr<PRun>> &runs) {
-    if (ranges.empty())
+    //cout << "range size1: " << ranges.size() << endl;
+    if (ranges.empty() || ranges.size() == 0)
         return;
-    pthread_rwlock_rdlock(&rwlock);
     // binary search for component i > 1
     KVRange end_range(kvrange.end_key, kvrange.end_key);
     //cout << "kvrange:" << kvrange.start_key << "," << kvrange.end_key << endl;
-    //cout << "range size: " << ranges.size() << endl;
+    //cout << "range size2: " << ranges.size() << endl;
     auto it_high = ranges.upper_bound(end_range);
-
-    if (it_high == ranges.end())
-        it_high--;
-
-    while (it_high != ranges.begin() && it_high->first.start_key > kvrange.end_key)
-        it_high--;
-
-    while (kvrange.start_key <= it_high->first.end_key) {
-        if (!(it_high->first.start_key > kvrange.end_key
-                || it_high->first.end_key < kvrange.start_key)) {
-            runs.push_back(it_high->second);
-        } else {
-            break;
-        }
-
-        if (it_high == ranges.begin()) {
-            break;
-        } else {
+    while (it_high == ranges.end() || kvrange.start_key <= it_high->first.end_key) {
+        if (it_high == ranges.end()) {
             it_high--;
+            continue;
         }
+        if (kvrange.end_key >= it_high->first.start_key)
+            runs.push_back(it_high->second);
+        if (it_high == ranges.begin())
+            break;
+        it_high--;
     }
-
-    reverse(runs.begin(), runs.end());
     //cout << "search done, low_run " << runs.size() << endl;
-    pthread_rwlock_unlock(&rwlock);
+    if (runs.size() > 0)
+        reverse(runs.begin(), runs.end());
     return;
 }
 
@@ -653,8 +600,8 @@ void MetaTable::search(KVRange &kvrange, vector<persistent_ptr<PRun>> &runs) {
 bool MetaTable::search(const string &key, string &val) {
     KVRange range(key, key);
     vector<persistent_ptr<PRun>> runs;
-    search(range, runs);
     pthread_rwlock_rdlock(&rwlock);
+    search(range, runs);
     for (auto run : runs) {
         int start = 0;
         int end = run->size - 1;

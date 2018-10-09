@@ -38,6 +38,7 @@
 #include <unistd.h>
 #include <algorithm>
 #include <ctime>
+#include <cmath>
 #include <string>
 /* thread pool headers */
 #include "nvlsm/threadpool.h"
