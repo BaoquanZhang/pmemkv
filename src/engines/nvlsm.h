@@ -73,6 +73,7 @@ namespace nvlsm {
 #define SLOW_DOWN_US 2
 
 const string ENGINE = "nvlsm";                         // engine identifier
+
 class Run;
 class PRun;
 class PKVPair;
@@ -117,7 +118,7 @@ struct KVRange {
     }
 };
 
-/* Run: container for storing kv_pairs on DRAM*/
+/* Run: container for storing kv_pairs on DRAM */
 class Run {
     public:
         pthread_rwlock_t rwlock;
@@ -130,11 +131,15 @@ class Run {
         bool search(string &req_key, string &req_val);
 };
 
-/* Run: container for storing kv_pairs on DRAM*/
+/* PRun: container for storing kv_pairs on Persistent Memory */
 class PRun {
     public:
-        char kv[PAIR_SIZE * RUN_SIZE];
-        size_t size;
+        char keys[KEY_SIZE * RUN_SIZE];
+        int val_lens[RUN_SIZE];
+        int val_offs[RUN_SIZE];
+        char vals[VAL_SIZE * RUN_SIZE];
+        size_t key_num;
+        size_t val_end;
         void append(const string &key, const string& val);
 };
 
@@ -188,7 +193,7 @@ class CompactionUnit {
         vector<persistent_ptr<PRun>> new_runs;
         CompactionUnit();
         ~CompactionUnit();
-        void display();
+        //void display();
 };
 
 class NVLsm : public KVEngine {
