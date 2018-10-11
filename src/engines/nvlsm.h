@@ -82,7 +82,6 @@ class NVLsm;
 
 /* PMEM structures */
 struct LSM_Root {                 // persistent root object
-    persistent_ptr<Run> head;   // head of the vector of levels
     mutex pmutex;
     shared_mutex shared_pmutex;
 };
@@ -113,8 +112,8 @@ struct KVRange {
                 || (start_key == kvrange.start_key && end_key > kvrange.end_key);
     }
 
-    void display() {
-        cout << " " << start_key << "," << end_key << endl;
+    void display() const {
+        cout << "<" << start_key << "," << end_key << "> ";
     }
 };
 
@@ -141,6 +140,7 @@ class PRun {
         size_t key_num;
         size_t val_end;
         void append(const string &key, const string& val);
+        void get_range(KVRange& kv_range);
 };
 
 /* MemTable: the write buffer in DRAM */
@@ -193,7 +193,7 @@ class CompactionUnit {
         vector<persistent_ptr<PRun>> new_runs;
         CompactionUnit();
         ~CompactionUnit();
-        //void display();
+        void display();
 };
 
 class NVLsm : public KVEngine {

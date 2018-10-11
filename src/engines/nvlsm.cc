@@ -93,35 +93,30 @@ CompactionUnit::~CompactionUnit(){
         delete_persistent_atomic<PRun>(low_runs[i]);
     }
 }
-/*
+
 void CompactionUnit::display() {
-    string start_key;
-    string end_key;;
+    KVRange kv_range;
     int key_num = up_run->key_num;
     auto keys = up_run->keys;
-    start_key.assign(keys[0], KEY_SIZE);
-    end_key.assign(index[key_num - 1].key, KEY_SIZE);
-    cout << "up run:" << "<" << start_key << "," << end_key << ">" << endl;
+    up_run->get_range(kv_range);
+    cout << "up run: ";
+    kv_range.display();
+    cout << endl;
     cout << "low runs: ";
     for (auto low_run : low_runs) {
-        key_num = low_run->key_num;
-        index = low_run->index;
-        start_key.assign(index[0].key, KEY_SIZE);
-        end_key.assign(index[key_num - 1].key, KEY_SIZE);
-        cout << "<" << start_key << "," << end_key << "> ";
+        low_run->get_range(kv_range);
+        kv_range.display();
     }
+    cout << endl;
     cout << "new runs: ";
     for (auto new_run : new_runs) {
-        key_num = new_run->key_num;
-        index = new_run->index;
-        start_key.assign(index[0].key, KEY_SIZE);
-        end_key.assign(index[key_num - 1].key, KEY_SIZE);
-        cout << "<" << start_key << "," << end_key << "> ";
+        new_run->get_range(kv_range);
+        kv_range.display();
     }
     cout << endl;
     return;
 }
-*/
+
 /* ######################## Implementations for NVLsm #################### */
 NVLsm::NVLsm(const string& path, const size_t size) {
     run_size = RUN_SIZE;
@@ -236,11 +231,8 @@ CompactionUnit * NVLsm::plan_compaction(size_t cur_comp) {
     unit->index = cur_comp;
     unit->up_run = meta_table[cur_comp].getCompact(); 
     if (meta_table.size() > cur_comp && meta_table[cur_comp + 1].getSize() > 0) {
-        int key_num = unit->up_run->key_num;
-        auto keys = unit->up_run->keys;
         KVRange range;
-        range.start_key.assign(&keys[0], KEY_SIZE);
-        range.end_key.assign(&keys[(key_num - 1) * KEY_SIZE], KEY_SIZE);
+        unit->up_run->get_range(range);
         meta_table[cur_comp + 1].search(range, unit->low_runs);
     }
     return unit;
@@ -282,10 +274,10 @@ void NVLsm::compact(int comp_index) {
         meta_log->append("commit", "compaction");
         LOG("deleting old data");
         delete unit;
-        //displayMeta();
+        displayMeta();
         compact(comp_index + 1);
     }
-    //cout << "compaction done" << endl;
+    cout << "compaction done" << endl;
     LOG("stop compactiom");
 }
 
@@ -483,21 +475,16 @@ size_t MetaTable::getSize() {
 void MetaTable::display() {
     cout << ranges.size() << endl;
     for (auto it : ranges) {
-        cout << "<" << it.first.start_key << "," << it.first.end_key << ">";
+        it.first.display();
         cout << "(" << it.second->key_num << ") ";
-        int size = it.second->key_num;
-        auto keys = it.second->keys;
-        if (strncmp(it.first.start_key.c_str(), &keys[0], KEY_SIZE) != 0
-                || strncmp(it.first.end_key.c_str(), &keys[(size - 1) * KEY_SIZE], KEY_SIZE) != 0) {
+        KVRange kv_range;
+        it.second->get_range(kv_range);
+        if (!(it.first == kv_range)) {
             cout << "kvrange inconsistent! " << endl;
             cout << "kvrange in meta table: ";
-            cout << "<" << it.first.start_key << "," << it.first.end_key << ">" << endl;
+            it.first.display();
             cout << "kvrange in run: ";
-            string data_start;
-            string data_end;
-            data_start.assign(&keys[0], KEY_SIZE);
-            data_end.assign(&keys[(size - 1) * KEY_SIZE], KEY_SIZE);
-            cout << "<" << data_start  << "," << data_end << ">" << endl;
+            kv_range.display();
             exit(1);
         }
     }
@@ -513,11 +500,8 @@ void MetaTable::add(vector<persistent_ptr<PRun>> runs) {
         return;
     }
     for (auto it : runs) {
-        auto keys = it->keys;
-        int size = it->key_num;
         KVRange kvrange;
-        kvrange.start_key.assign(&keys[0], KEY_SIZE);
-        kvrange.end_key.assign(&keys[(size - 1) * KEY_SIZE], KEY_SIZE);
+        it->get_range(kvrange);
         ranges[kvrange] = it;
     }
     pthread_rwlock_unlock(&rwlock);
@@ -526,11 +510,8 @@ void MetaTable::add(vector<persistent_ptr<PRun>> runs) {
 
 void MetaTable::add(persistent_ptr<PRun> run) {
     pthread_rwlock_wrlock(&rwlock);
-    auto keys = run->keys;
-    int size = run->key_num;
     KVRange kvrange;
-    kvrange.start_key.assign(&keys[0], KEY_SIZE);
-    kvrange.end_key.assign(&keys[(size - 1) * KEY_SIZE], KEY_SIZE);
+    run->get_range(kvrange);
     ranges[kvrange] = run;
     pthread_rwlock_unlock(&rwlock);
     return;
@@ -540,11 +521,8 @@ void MetaTable::add(persistent_ptr<PRun> run) {
 bool MetaTable::del(persistent_ptr<PRun> run) {
     pthread_rwlock_wrlock(&rwlock);
     int count = 0;
-    auto keys = run->keys;
-    auto size = run->key_num;
     KVRange kvrange;
-    kvrange.start_key.assign(&keys[0], KEY_SIZE);
-    kvrange.end_key.assign(&keys[(size - 1) * KEY_SIZE], KEY_SIZE);
+    run->get_range(kvrange);
     count += ranges.erase(kvrange);
     if (count != 1) {
         cout << "erase " << count << " out of 1" << endl;
@@ -561,11 +539,8 @@ bool MetaTable::del(vector<persistent_ptr<PRun>> runs) {
     pthread_rwlock_wrlock(&rwlock);
     int count = 0;
     for (auto run : runs) {
-        auto keys = run->keys;
-        auto size = run->key_num;
         KVRange kvrange;
-        kvrange.start_key.assign(&keys[0], KEY_SIZE);
-        kvrange.end_key.assign(&keys[(size - 1) * KEY_SIZE], KEY_SIZE);
+        run->get_range(kvrange);
         if (ranges.erase(kvrange) != 1) {
             cout << "deleting range failed: ";
             kvrange.display();
@@ -586,11 +561,11 @@ bool MetaTable::del(vector<persistent_ptr<PRun>> runs) {
 /* get a run for compaction */
 persistent_ptr<PRun> MetaTable::getCompact() {
     auto it = ranges.begin();
+    if (next_compact >= ranges.size())
+        next_compact = 0;
     advance(it, next_compact);
     auto run = it->second;
     next_compact++;
-    if (next_compact == ranges.size())
-        next_compact = 0;
     return run;
 }
 
@@ -704,6 +679,12 @@ void PRun::append(const string &key, const string &val) {
     } catch (pmem::transaction_error &te) {
 
     }
+}
+
+void PRun::get_range(KVRange& kv_range) {
+    kv_range.start_key.assign(&keys[0], KEY_SIZE);
+    kv_range.end_key.assign(&keys[(key_num - 1) * KEY_SIZE], KEY_SIZE);
+    return;
 }
 /* #################### Implementations of Run ############################### */
 Run::Run() 
