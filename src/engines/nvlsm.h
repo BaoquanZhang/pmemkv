@@ -54,6 +54,7 @@
 #include <libpmemobj++/mutex.hpp>
 
 #include "../pmemkv.h"
+#include "persistent_queue.h"
 
 using namespace std;
 /* pmdk namespace */
@@ -82,8 +83,6 @@ class NVLsm;
 /* PMEM structures */
 struct LSM_Root {                 // persistent root object
     persistent_ptr<Run> head;   // head of the vector of levels
-    mutex pmutex;
-    shared_mutex shared_pmutex;
 };
 
 /* KVRange : range for runs */
@@ -113,8 +112,16 @@ struct KVRange {
     }
 
     void display() const {
-        cout << "<" << start_key << "," << end_key << "> " << endl;
+        cout << "<" << start_key << "," << end_key << "> ";;
     }
+};
+
+/* log entry for kvlog and compaction log */
+class Log {
+    private:
+        char ops[100];
+    public:
+        void append(string str);
 };
 
 /* Run: container for storing kv_pairs on DRAM*/
@@ -131,11 +138,20 @@ class Run {
 };
 
 /* PRun: container for storing kv_pairs on pmem*/
+struct KeyEntry {
+    char key[KEY_SIZE];
+    size_t val_len;
+    persistent_ptr<char> p_val;
+};
 class PRun {
     public:
-        char kv[PAIR_SIZE * RUN_SIZE];
-        size_t size;
-        void append(const string &key, const string& val);
+        PRun();
+        ~PRun();
+        //persistent_ptr<KeyEntry[RUN_SIZE]> key_entry;
+        //persistent_ptr<char[VAL_SIZE * RUN_SIZE]> vals;
+        KeyEntry key_entry[RUN_SIZE];
+        char vals[VAL_SIZE * RUN_SIZE];
+        p<size_t> size;
         void get_range(KVRange& range);
 };
 
@@ -146,7 +162,7 @@ class MemTable {
         pthread_rwlock_t rwlock;        // rw lock for write/read
         queue<Run *> persist_queue; // persist queue for memtable
         size_t buf_size;
-        persistent_ptr<PRun> kvlog;
+        persistent_ptr<Log> kvlog;
     public:
         MemTable(int size); // buffer size
         ~MemTable();
@@ -166,7 +182,7 @@ class MetaTable {
         MetaTable();
         ~MetaTable();
         size_t getSize(); // get the size of ranges
-        void add(vector<persistent_ptr<PRun>> runs);
+        bool add(vector<persistent_ptr<PRun>> runs);
         void add(persistent_ptr<PRun> run);
         bool del(persistent_ptr<PRun> runs);
         bool del(vector<persistent_ptr<PRun>> runs);
@@ -177,8 +193,6 @@ class MetaTable {
         void display();
         persistent_ptr<PRun> getCompact(); // get the run for compaction
 };
-
-
 
 /* the basic unit of a compaction */
 class CompactionUnit {
@@ -205,12 +219,13 @@ class NVLsm : public KVEngine {
         // internal structure
         MemTable * mem_table;
         vector<MetaTable> meta_table;
-        persistent_ptr<PRun> meta_log; // log for meta table
+        persistent_ptr<Log> meta_log; // log for meta table
         // utility
         CompactionUnit * plan_compaction(size_t index);
         void compact(int index);
         void merge_sort(CompactionUnit * unit);
         void displayMeta();
+        void copy_kv(persistent_ptr<PRun> des_run, int des_i, persistent_ptr<PRun> src_run, int src_i);
         // public interface
         string Engine() final { return ENGINE; }               // engine identifier
         KVStatus Get(int32_t limit,                            // copy value to fixed-size buffer
