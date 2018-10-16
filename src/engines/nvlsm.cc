@@ -87,26 +87,21 @@ CompactionUnit::~CompactionUnit(){
 void CompactionUnit::display() {
     string start_key;
     string end_key;
-    auto kv = up_run->kv;
-    int size = up_run->size;
-    start_key.assign(&kv[0], KEY_SIZE);
-    end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
-    cout << "up run:" << "<" << start_key << "," << end_key << ">" << endl;
+    KVRange range;
+    up_run->get_range(range);
+    cout << "up run: ";
+    range.display();
+    cout << endl;
     cout << "low runs: ";
     for (auto low_run : low_runs) {
-        kv = low_run->kv;
-        size = low_run->size;
-        start_key.assign(&kv[0], KEY_SIZE);
-        end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
-        cout << "<" << start_key << "," << end_key << "> ";
+        low_run->get_range(range);
+        range.display();
     }
+    cout << endl;
     cout << "new runs: ";
     for (auto new_run : new_runs) {
-        kv = new_run->kv;
-        size = new_run->size;
-        start_key.assign(&kv[0], KEY_SIZE);
-        end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
-        cout << "<" << start_key << "," << end_key << "> ";
+        new_run->get_range(range);
+        range.display();
     }
     cout << endl;
     return;
@@ -226,11 +221,8 @@ CompactionUnit * NVLsm::plan_compaction(size_t index) {
     unit->index = index;
     unit->up_run = meta_table[index].getCompact(); 
     if (meta_table.size() > index && meta_table[index + 1].getSize() > 0) {
-        int size = unit->up_run->size;
-        auto kv = unit->up_run->kv;
         KVRange range;
-        range.start_key.assign(&kv[0], KEY_SIZE);
-        range.end_key.assign(&kv[PAIR_SIZE * (size - 1)]);
+        unit->up_run->get_range(range);
         meta_table[index + 1].search(range, unit->low_runs);
     }
     return unit;
@@ -460,19 +452,15 @@ void MetaTable::display() {
     for (auto it : ranges) {
         cout << "<" << it.first.start_key << "," << it.first.end_key << ">";
         cout << "(" << it.second->size << ") ";
-        auto kv = it.second->kv;
-        int size = it.second->size;
-        if (strncmp(it.first.start_key.c_str(), &kv[0], KEY_SIZE) != 0
-                || strncmp(it.first.end_key.c_str(), &kv[PAIR_SIZE * (size - 1)], KEY_SIZE) != 0) {
+        KVRange range;
+        it.second->get_range(range);
+        if (!(it.first == range)) {
             cout << "kvrange inconsistent! " << endl;
             cout << "kvrange in meta table: ";
-            cout << "<" << it.first.start_key << "," << it.first.end_key << ">" << endl;
+            it.first.display();
+            cout << endl;
             cout << "kvrange in run: ";
-            string data_start;
-            string data_end;
-            data_start.assign(&kv[0], KEY_SIZE);
-            data_end.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
-            cout << "<" << data_start  << "," << data_end << ">" << endl;
+            range.display();
             exit(1);
         }
     }
@@ -488,11 +476,8 @@ void MetaTable::add(vector<persistent_ptr<PRun>> runs) {
         return;
     }
     for (auto it : runs) {
-        auto kv = it->kv;
-        int size = it->size;
         KVRange kvrange;
-        kvrange.start_key.assign(&kv[0], KEY_SIZE);
-        kvrange.end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
+        it->get_range(kvrange);
         ranges[kvrange] = it;
     }
     pthread_rwlock_unlock(&rwlock);
@@ -501,11 +486,8 @@ void MetaTable::add(vector<persistent_ptr<PRun>> runs) {
 
 void MetaTable::add(persistent_ptr<PRun> run) {
     pthread_rwlock_wrlock(&rwlock);
-    auto kv = run->kv;
-    int size = run->size;
     KVRange kvrange;
-    kvrange.start_key.assign(&kv[0], KEY_SIZE);
-    kvrange.end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
+    run->get_range(kvrange);
     ranges[kvrange] = run;
     pthread_rwlock_unlock(&rwlock);
     return;
@@ -515,11 +497,8 @@ void MetaTable::add(persistent_ptr<PRun> run) {
 bool MetaTable::del(persistent_ptr<PRun> run) {
     pthread_rwlock_wrlock(&rwlock);
     int count = 0;
-    auto kv = run->kv;
-    auto size = run->size;
     KVRange kvrange;
-    kvrange.start_key.assign(&kv[0], KEY_SIZE);
-    kvrange.end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
+    run->get_range(kvrange);
     count += ranges.erase(kvrange);
     if (count != 1) {
         cout << "erase " << count << " out of 1" << endl;
@@ -536,11 +515,8 @@ bool MetaTable::del(vector<persistent_ptr<PRun>> runs) {
     pthread_rwlock_wrlock(&rwlock);
     int count = 0;
     for (auto run : runs) {
-        auto kv = run->kv;
-        auto size = run->size;
         KVRange kvrange;
-        kvrange.start_key.assign(&kv[0], KEY_SIZE);
-        kvrange.end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
+        run->get_range(kvrange);
         if (ranges.erase(kvrange) != 1) {
             cout << "deleting range failed: ";
             kvrange.display();
@@ -670,6 +646,8 @@ bool MetaTable::seq_search(const string &key, string &val) {
 }
 
 /* ###################### PRun ######################### */
+/* add kv pair in an tx
+ * this function is only called for log */
 void PRun::append(const string &key, const string &val) {
     string str = key + val;
     auto proot = pmpool.get_root();
@@ -684,6 +662,13 @@ void PRun::append(const string &key, const string &val) {
     size++;
     if (size == RUN_SIZE)
         size = 0;
+}
+
+/* get kvrange for the current run */
+void PRun::get_range(KVRange& range) {
+    range.start_key.assign(&kv[0], KEY_SIZE);
+    range.end_key.assign(&kv[PAIR_SIZE * (size - 1)], KEY_SIZE);
+    return;
 }
 /* #################### Implementations of Run ############################### */
 Run::Run() 

@@ -112,8 +112,8 @@ struct KVRange {
                 || (start_key == kvrange.start_key && end_key > kvrange.end_key);
     }
 
-    void display() {
-        cout << " " << start_key << "," << end_key << endl;
+    void display() const {
+        cout << "<" << start_key << "," << end_key << "> " << endl;
     }
 };
 
@@ -130,12 +130,13 @@ class Run {
         bool search(string &req_key, string &req_val);
 };
 
-/* Run: container for storing kv_pairs on DRAM*/
+/* PRun: container for storing kv_pairs on pmem*/
 class PRun {
     public:
         char kv[PAIR_SIZE * RUN_SIZE];
         size_t size;
         void append(const string &key, const string& val);
+        void get_range(KVRange& range);
 };
 
 /* MemTable: the write buffer in DRAM */
