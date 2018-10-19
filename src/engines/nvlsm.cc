@@ -206,6 +206,7 @@ KVStatus NVLsm::Get(const string& key, string* value) {
 
 KVStatus NVLsm::Put(const string& key, const string& value) {
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
+    //cout << "Put key=" << key.c_str() << ", value.size=" << to_string(value.size()) << endl;;
     while (mem_table->getSize() > com_ratio)
         usleep(SLOW_DOWN_US); 
     if (mem_table->append(key, value)) {
@@ -221,6 +222,7 @@ KVStatus NVLsm::Put(const string& key, const string& value) {
 
 KVStatus NVLsm::Remove(const string& key) {
     LOG("Remove key=" << key.c_str());
+    //cout << "Remove key=" << key.c_str() << endl;;
     return OK;
 }
 

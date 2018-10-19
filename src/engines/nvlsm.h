@@ -54,7 +54,6 @@
 #include <libpmemobj++/mutex.hpp>
 
 #include "../pmemkv.h"
-#include "persistent_queue.h"
 
 using namespace std;
 /* pmdk namespace */
@@ -130,6 +129,7 @@ class Run {
         pthread_rwlock_t rwlock;
         map<string, string> kv;
         size_t size;
+        size_t iter;
         KVRange range;
         Run();
         ~Run();
@@ -151,7 +151,8 @@ class PRun {
         //persistent_ptr<char[VAL_SIZE * RUN_SIZE]> vals;
         KeyEntry key_entry[RUN_SIZE];
         char vals[VAL_SIZE * RUN_SIZE];
-        p<size_t> size;
+        size_t iter;
+        size_t size;
         void get_range(KVRange& range);
 };
 
