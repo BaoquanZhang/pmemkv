@@ -272,28 +272,22 @@ size_t MetaTable::getSize() {
 
 /* add: add metadata for a segment/segments */
 void MetaTable::add(persistent_ptr<PSegment> seg) {
-    pthread_rwlock_wrlock(&rwlock);
     segRanges[seg->allRange] = seg;
-    pthread_rwlock_unlock(&rwlock);
     return;
 }
 void MetaTable::add(vector<persistent_ptr<PSegment>> segs) {
-    pthread_rwlock_wrlock(&rwlock);
     for (auto seg : segs) {
         segRanges[seg->allRange] = seg;
     }
-    pthread_rwlock_unlock(&rwlock);
     return;
 }
 
 /* del: delete metadata (data if needed) for a seg/segs */
 void MetaTable::del(vector<persistent_ptr<PSegment>> segs) {
-    pthread_rwlock_wrlock(&rwlock);
     int count = 0;
     for (auto seg : segs) {
         count += segRanges.erase(seg->allRange);
     }
-    pthread_rwlock_unlock(&rwlock);
     if (count != segs.size()) {
         cout << "delete error: delete " << count << " of " << segs.size();
         exit(-1);
@@ -301,17 +295,13 @@ void MetaTable::del(vector<persistent_ptr<PSegment>> segs) {
     return;
 }
 void MetaTable::del(persistent_ptr<PSegment> seg) {
-    pthread_rwlock_wrlock(&rwlock);
     int count = 0;
     segRanges.erase(seg->allRange);
-    pthread_rwlock_unlock(&rwlock);
 }
 
 /* search: search a key / overlapped ranges in a component */
 bool MetaTable::search(const string& key, string& value) {
-    pthread_rwlock_wrlock(&rwlock);
     // to-do
-    pthread_rwlock_unlock(&rwlock);
     return true;
 }
 void MetaTable::search(KVRange& kvRange, vector<persistent_ptr<PSegment>>& segs) {
@@ -340,9 +330,42 @@ void MetaTable::search(KVRange& kvRange, vector<persistent_ptr<PSegment>>& segs)
 }
 
 /* build_layer: build a new layer using a seg */
-void build_layer(persistent_ptr<PSegment> seg) {
+void MetaTable::do_build(vector<persistent_ptr<PSegment>> overlapped_segs, 
+        persistent_ptr<PSegment> seg, vector<persistent_ptr<PSegment>>& new_segs) {
+    int cur = seg->start;
+    for (auto overlap_seg : overlapped_segs) {
+        int btm_left = overlap_seg->start;
+        int btm_right = btm_left;
+        /* step 1: skip the non-overlapped keys */
+        while (btm_right < overlap_seg->end) {
+            auto up_key = seg->pRun->key_entry[cur].key;
+            auto btm_key = overlap_seg->pRun->key_entry[btm_right].key;
+            int res = strncmp(up_key, btm_key, KEY_SIZE);
+            if (res > 0)
+                btm_right++;
+            else
+                break;
+        }
+        /* check if the skipped keys are enough to build a new seg */
+        if (btm_right - btn_left >= RUN_SIZE / 4) {
+            new_segs.emplace_back(overlap_seg->pRun, btm_left, btm_right);
+        }
+    }
+    return;
+}
+void MetaTable::build_layer(persistent_ptr<PSegment> seg) {
+    pthread_rwlock_wrlock(&rwlock);
     vector<persistent_ptr<PSegment>> overlapped_segs;
-    search(seg->allRange, overlapped_segs)
+    search(seg->allRange, overlapped_segs);
+    if (overlapped_segs.size() == 0) {
+        add(seg);
+    } else {
+        vector<persistent_ptr<PSegment>> new_segs;
+        do_build(overlapped_segs, segs, new_segs);
+        add(new_segs);
+    }
+    pthread_rwlock_unlock(&rwlock);
+    return;
 }
 /* ###################### PRun ######################### */
 PRun::PRun(): size(0), seg_count(1) {
