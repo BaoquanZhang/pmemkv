@@ -159,6 +159,7 @@ struct KeyEntry {
     char key[KEY_SIZE];
     size_t val_len;
     char* p_val;
+    size_t next_key = -1; // offset of the bottom key, default -1
 };
 class PRun {
     public:
@@ -177,12 +178,14 @@ class PRun {
 class PSegment {
     public:
         persistent_ptr<PRun> pRun;
-        KVRange allRange;
         size_t start;
         size_t end;
-        size_t search(string key, string& value);
+        size_t depth;
         persistent_ptr<PSegment> next_seg;
+        size_t search(string key, string& value);
+        char* get_end(int index);
         void get_localRange(KVRange& kvRange);
+        void get_globalRange(KVRange& kvRange);
         PSegment(persistent_ptr<PRun> p_run, size_t start_i, size_t end_i);
         ~PSegment();
 };
@@ -205,6 +208,7 @@ class MetaTable {
         bool search(const string& key, string& val);
         void search(KVRange& kvRange, vector<persistent_ptr<PSegment>>& segs);
         void build_layer(persistent_ptr<PSegment> seg);
+        void do_build(vector<persistent_ptr<PSegment>>& overlap_segs, persistent_ptr<PSegment> seg);
 };
 
 class NVLsm2 : public KVEngine {

@@ -36,6 +36,7 @@
 #include "engines/versioned_b_tree.h"
 /* add for nvlsm */
 #include "engines/nvlsm.h"
+#include "engines/nvlsm2.h"
 
 namespace pmemkv {
 
@@ -43,6 +44,8 @@ KVEngine* KVEngine::Open(const string& engine, const string& path, const size_t 
     try {
         if (engine == nvlsm::ENGINE) {
             return new nvlsm::NVLsm(path, size);
+        } else if (engine == nvlsm2::ENGINE) {
+            return new nvlsm2::NVLsm2(path, size);
         } else if (engine == blackhole::ENGINE) {
             return new blackhole::Blackhole();
         } else if (engine == kvtree::ENGINE) {
@@ -63,6 +66,9 @@ void KVEngine::Close(KVEngine* kv) {
     auto engine = kv->Engine();
     if (engine == nvlsm::ENGINE) {
         delete (nvlsm::NVLsm*) kv;
+    } else if (engine == nvlsm2::ENGINE) {
+        delete (nvlsm2::NVLsm2*) kv;
+    } else if (engine == nvlsm2::ENGINE) {
     } else if (engine == blackhole::ENGINE) {
         delete (blackhole::Blackhole*) kv;
     } else if (engine == kvtree::ENGINE) {
