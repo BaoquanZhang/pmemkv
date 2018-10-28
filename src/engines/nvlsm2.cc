@@ -70,10 +70,7 @@ static void persist(void * v_nvlsm) {
     p_run.persist();
     delete run;
     /* start to build layers */ 
-    persistent_ptr<PSegment> new_seg;
-    make_persistent_atomic<PSegment>(pmpool, new_seg, p_run, 0, p_run->size - 1);
-    new_seg->depth = 1;
-    meta_table->build_layer(new_seg);
+    meta_table->build_layer(p_run);
     //cout << "persist stop" << endl;
 }
 /* ######################## Log #########################################*/
@@ -275,13 +272,13 @@ size_t MetaTable::getSize() {
 }
 
 /* add: add metadata for a segment/segments */
-void MetaTable::add(persistent_ptr<PSegment> seg) {
+void MetaTable::add(PSegment* seg) {
     KVRange kvRange;
     seg->get_globalRange(kvRange);
     segRanges[kvRange] = seg;
     return;
 }
-void MetaTable::add(vector<persistent_ptr<PSegment>> segs) {
+void MetaTable::add(vector<PSegment*> segs) {
     for (auto seg : segs) {
         KVRange kvRange;
         seg->get_globalRange(kvRange);
@@ -291,7 +288,7 @@ void MetaTable::add(vector<persistent_ptr<PSegment>> segs) {
 }
 
 /* del: delete metadata (data if needed) for a seg/segs */
-void MetaTable::del(vector<persistent_ptr<PSegment>> segs) {
+void MetaTable::del(vector<PSegment*> segs) {
     int count = 0;
     for (auto seg : segs) {
         KVRange kvRange;
@@ -304,7 +301,7 @@ void MetaTable::del(vector<persistent_ptr<PSegment>> segs) {
     }
     return;
 }
-void MetaTable::del(persistent_ptr<PSegment> seg) {
+void MetaTable::del(PSegment* seg) {
     int count = 0;
     KVRange kvRange;
     seg->get_globalRange(kvRange);
@@ -321,7 +318,7 @@ bool MetaTable::search(const string& key, string& value) {
     // to-do
     return true;
 }
-void MetaTable::search(KVRange& kvRange, vector<persistent_ptr<PSegment>>& segs) {
+void MetaTable::search(KVRange& kvRange, vector<PSegment*>& segs) {
     if (segRanges.empty() || segRanges.size() == 0)
         return;
     // binary search for component i > 1
@@ -347,94 +344,98 @@ void MetaTable::search(KVRange& kvRange, vector<persistent_ptr<PSegment>>& segs)
 }
 
 /* build_layer: build a new layer using a seg */
-void MetaTable::do_build(vector<persistent_ptr<PSegment>>& overlapped_segs, persistent_ptr<PSegment> seg) {
-    vector<persistent_ptr<PSegment>> new_segs;
-    int up_right = seg->start;
-    int up_left = seg->start;
+void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun> run) {
+    vector<PSegment*> new_segs;
+    PSegment* new_seg = NULL;
+    int up_right = 0;
+    int up_left = 0;
     for (auto overlap_seg : overlapped_segs) {
+        if (up_right == run->size) {
+            /* almost impossible */
+            new_segs.push_back(overlap_seg);
+            continue;
+        }
         int btm_left = overlap_seg->start;
         int btm_right = btm_left;
-        auto up_key = seg->pRun->key_entry[up_right].key;
+        auto up_key = run->key_entry[up_right].key;
         /* step 1: skip the non-overlapped keys */
         while (btm_right < overlap_seg->end) {
             auto btm_end = overlap_seg->get_end(btm_right);
-            int res = strncmp(up_key, btm_key, KEY_SIZE);
+            int res = strncmp(up_key, btm_end, KEY_SIZE);
             if (res <= 0)
                 break;
             btm_right++;
         }
-        if (btm_right > btm_left)
-            btm_right--; // back to the last smaller key
-        while (btm_right > btm_left) {
-            /* step 1.1: check if btm_right moves backward */
-            auto btm_end = overlap_seg->get_end(btm_right);
-            if (strncmp(btm_end, up_key, KEY_SIZE) < 0)
-                break;
-            btm_right--;
-        }
         /* check if the skipped keys are enough to build a new seg */
         if (btm_right - btm_left >= RUN_SIZE / 4) {
-            persistent_ptr<PSegment> new_seg;
-            make_persistent_atomic<PSegment>(pmpool, new_seg, overlap_seg->pRun, btm_left, btm_right);
+            new_seg = new PSegment(overlap_seg->pRun, btm_left, btm_right - 1);
             overlap_seg->pRun->seg_count++; // create a new seg in bottom seg;
-            //overlap_seg->start = btm_right + 1;
-            new_seg->next_seg = overlap_seg->next_seg; 
             new_seg->depth = overlap_seg->depth;
             new_segs.push_back(new_seg);
-            btm_right++;
             btm_left = btm_right;
         }
         /* step 2: build the link */
-        while (up_right <= seg->end && btm_right <= overlap_seg->end) {
+        while (up_right < run->size && btm_right <= overlap_seg->end) {
             auto btm_key = overlap_seg->pRun->key_entry[btm_right].key;
-            up_key = seg->pRun->key_entry[up_right].key;
+            up_key = run->key_entry[up_right].key;
             if (strncmp(up_key, btm_key, KEY_SIZE) <= 0) {
-                seg->pRun->key_entry[up_right].next_key = btm_right;
+                run->key_entry[up_right].next_key = btm_right;
+                run->key_entry[up_right].next_run = overlap_seg->pRun;
                 up_right++;
             } else {
                 btm_right++;
             }
         }
-        /* step 3: add overlapped seg */
-        persistent_ptr<PSegment> new_seg;
-        make_persistent_atomic<PSegment>(pmpool, new_seg, seg->pRun, up_left, up_right);
-        new_seg->next_seg = overlap_seg;
-        seg->pRun->seg_count++;
-        new_seg->depth = overlap_seg->depth + 1;
-        new_segs.push_back(new_seg);
-        /* step 4: check if the rest of the keys in the btm can build a new segs */
-        while (btm_right < overlap_seg->end) {
-            auto btm_end = overlap_seg->get_end(btm_right);
-            auto btm_next = overlap_seg->pRun->key_entry[btm_right + 1].key;
-            if (strncmp(btm_end, btm_next, KEY_SIZE) < 0)
-                break;
-            btm_right++;
+        if (up_right == run->size) {
+            /* step 3: add new segs if run out of up key */
+            new_seg = new PSegment(run, up_left, up_right - 1);
+            run->seg_count++;
+            new_seg->depth = overlap_seg->depth + 1;
+            new_segs.push_back(new_seg);
+            /* step 4: check if the rest of the keys in the btm can build a new segs */
+            auto up_end = new_seg->get_end(up_right); 
+            while (btm_right <= overlap_seg->end) {
+                auto btm_key = overlap_seg->pRun->key_entry[btm_right].key;
+                if (strncmp(btm_key, up_end, KEY_SIZE) > 0)
+                    break;
+                btm_right++;
+            }
+            if (overlap_seg->end - btm_right >= RUN_SIZE / 4) {
+                new_seg = new PSegment(overlap_seg->pRun, btm_right, overlap_seg->end);
+                new_seg->pRun->seg_count++;
+                new_seg->depth = overlap_seg->depth;
+                new_segs.push_back(new_seg);
+            }
         }
-        if (overlap_seg->end - btm_right >= RUN_SIZE / 4) {
-            persistent_ptr<PSegment> tmp_new;
-            make_persistent_atomic<PSegment>(pmpool, tmp_new, overlap_seg->pRun, btm_right, overlap_seg->end);
-            tmp_new->pRun->seg_count++;
-            tmp_new->next_seg = overlap_seg->next_seg;
-            tmp_new->depth = overlap_seg->depth;
-            new_segs.push_back(tmp_new);
-            //overlap_seg->end = btm_right - 1;
+    }
+    while (up_right < run->size) {
+        auto last_run = overlapped_segs.back()->pRun;
+        auto last_index = overlapped_segs.back()->end;
+        run->key_entry[up_right].next_key = last_index;
+        run->key_entry[up_right].next_run = last_run;
+        up_right++;
+        if (up_right == run->size - 1) {
+            new_seg = new PSegment(run, up_left, up_right - 1);
+            run->seg_count++;
+            new_seg->depth = overlapped_segs.back()->depth + 1;
+            new_segs.push_back(new_seg);
         }
-        up_left = up_right;
     }
     del(overlapped_segs);
     add(new_segs);
     return;
 }
-void MetaTable::build_layer(persistent_ptr<PSegment> seg) {
+void MetaTable::build_layer(persistent_ptr<PRun> run) {
     pthread_rwlock_wrlock(&rwlock);
-    vector<persistent_ptr<PSegment>> overlapped_segs;
+    vector<PSegment*> overlapped_segs;
     KVRange kvRange;
+    PSegment* seg = new PSegment(run, 0, run->size - 1);
     seg->get_globalRange(kvRange);
     search(kvRange, overlapped_segs);
     if (overlapped_segs.size() == 0) {
         add(seg);
     } else {
-        do_build(overlapped_segs, seg);
+        do_build(overlapped_segs, run);
     }
     pthread_rwlock_unlock(&rwlock);
     return;
@@ -505,10 +506,16 @@ void PSegment::get_globalRange(KVRange& kvRange) {
  * para: index -- the location to check 
  * */
 char* PSegment::get_end(int index) {
-    if (next_seg && pRun->key_entry[index].next_key != -1) {
-        return next_seg->get_end(pRun->key_entry[index].next_key);
+    char* end_key = NULL;
+    auto cur_run = pRun;
+    auto cur_index = index;
+    while (cur_run && cur_index != -1) {
+        end_key = cur_run->key_entry[cur_index].key;
+        index = cur_index;
+        cur_index = cur_run->key_entry[index].next_key;
+        cur_run = cur_run->key_entry[index].next_run;
     }
-    return pRun->key_entry[index].key;
+    return end_key;
 }
 
 /* #################### Implementations of Run ############################### */

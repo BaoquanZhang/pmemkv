@@ -160,6 +160,7 @@ struct KeyEntry {
     size_t val_len;
     char* p_val;
     size_t next_key = -1; // offset of the bottom key, default -1
+    persistent_ptr<PRun> next_run;
 };
 class PRun {
     public:
@@ -181,7 +182,6 @@ class PSegment {
         size_t start;
         size_t end;
         size_t depth;
-        persistent_ptr<PSegment> next_seg;
         size_t search(string key, string& value);
         char* get_end(int index);
         void get_localRange(KVRange& kvRange);
@@ -196,19 +196,19 @@ class MetaTable {
         pthread_rwlock_t rwlock;
         size_t next_compact;  // index for the run of the last compaction
         map<KVRange, persistent_ptr<PRun>> ranges;
-        map<KVRange, persistent_ptr<PSegment>> segRanges;
+        map<KVRange, PSegment*> segRanges;
         MetaTable();
         ~MetaTable();
         size_t getSize(); // get the size of ranges
         /* functions for segment ops in multiple layers */
-        void add(vector<persistent_ptr<PSegment>> segs);
-        void add(persistent_ptr<PSegment> seg);
-        void del(vector<persistent_ptr<PSegment>> segs);
-        void del(persistent_ptr<PSegment> seg);
+        void add(vector<PSegment*> segs);
+        void add(PSegment* seg);
+        void del(vector<PSegment*> segs);
+        void del(PSegment* seg);
         bool search(const string& key, string& val);
-        void search(KVRange& kvRange, vector<persistent_ptr<PSegment>>& segs);
-        void build_layer(persistent_ptr<PSegment> seg);
-        void do_build(vector<persistent_ptr<PSegment>>& overlap_segs, persistent_ptr<PSegment> seg);
+        void search(KVRange& kvRange, vector<PSegment*>& segs);
+        void build_layer(persistent_ptr<PRun> run);
+        void do_build(vector<PSegment*>& overlap_segs, persistent_ptr<PRun> run);
 };
 
 class NVLsm2 : public KVEngine {
