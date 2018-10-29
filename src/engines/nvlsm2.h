@@ -186,6 +186,7 @@ class PSegment {
         char* get_end(int index);
         void get_localRange(KVRange& kvRange);
         void get_globalRange(KVRange& kvRange);
+        void display();
         PSegment(persistent_ptr<PRun> p_run, size_t start_i, size_t end_i);
         ~PSegment();
 };
@@ -195,7 +196,6 @@ class MetaTable {
     public:
         pthread_rwlock_t rwlock;
         size_t next_compact;  // index for the run of the last compaction
-        map<KVRange, persistent_ptr<PRun>> ranges;
         map<KVRange, PSegment*> segRanges;
         MetaTable();
         ~MetaTable();
@@ -209,6 +209,7 @@ class MetaTable {
         void search(KVRange& kvRange, vector<PSegment*>& segs);
         void build_layer(persistent_ptr<PRun> run);
         void do_build(vector<PSegment*>& overlap_segs, persistent_ptr<PRun> run);
+        void display();
 };
 
 class NVLsm2 : public KVEngine {
@@ -226,7 +227,7 @@ class NVLsm2 : public KVEngine {
         vector<MetaTable> meta_table;
         persistent_ptr<Log> meta_log; // log for meta table
         // utility
-        void displayMeta();
+        void display();
         void copy_kv(persistent_ptr<PRun> des_run, int des_i, persistent_ptr<PRun> src_run, int src_i);
         // public interface
         string Engine() final { return ENGINE; }               // engine identifier

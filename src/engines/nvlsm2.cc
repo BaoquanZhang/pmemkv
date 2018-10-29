@@ -70,7 +70,11 @@ static void persist(void * v_nvlsm) {
     p_run.persist();
     delete run;
     /* start to build layers */ 
+    cout << "before building new layers: " << endl;
+    nvlsm->display();
     meta_table->build_layer(p_run);
+    cout << "after building new layers: " << endl;
+    nvlsm->display();
     //cout << "persist stop" << endl;
 }
 /* ######################## Log #########################################*/
@@ -118,7 +122,6 @@ NVLsm2::NVLsm2(const string& path, const size_t size)
 NVLsm2::~NVLsm2() {
     while (mem_table->getSize() > 0)
         usleep(500);
-    displayMeta();
     persist_pool->destroy_threadpool();
     delete_persistent_atomic<Log>(meta_log);
     delete mem_table;
@@ -188,8 +191,12 @@ void NVLsm2::copy_kv(persistent_ptr<PRun> des_run, int des_i, persistent_ptr<PRu
 }
 
 /* display the meta tables */
-void NVLsm2::displayMeta() {
+void NVLsm2::display() {
     cout << "=========== start displaying meta table ======" << endl;
+    for (int i = 0; i < meta_table.size(); i++) {
+        cout << "Component " << i << ": " << endl;
+        meta_table[i].display();
+    }
     cout << "=========== end displaying meta table ========" << endl;
 }
 
@@ -268,7 +275,7 @@ MetaTable::~MetaTable() {
 
 /* getSize: get the size of ranges */
 size_t MetaTable::getSize() {
-    return ranges.size();
+    return segRanges.size();
 }
 
 /* add: add metadata for a segment/segments */
@@ -286,7 +293,6 @@ void MetaTable::add(vector<PSegment*> segs) {
     }
     return;
 }
-
 /* del: delete metadata (data if needed) for a seg/segs */
 void MetaTable::del(vector<PSegment*> segs) {
     int count = 0;
@@ -294,6 +300,7 @@ void MetaTable::del(vector<PSegment*> segs) {
         KVRange kvRange;
         seg->get_globalRange(kvRange);
         count += segRanges.erase(kvRange);
+        delete seg;
     }
     if (count != segs.size()) {
         cout << "delete error: delete " << count << " of " << segs.size();
@@ -310,6 +317,30 @@ void MetaTable::del(PSegment* seg) {
         cout << "delete error: delete " << count << " of 1" << endl;
         exit(-1);
     }
+    delete seg;
+    return;
+}
+
+/* display: display the ranges in the current component */
+void MetaTable::display() {
+    cout << segRanges.size() << " ranges." << endl;
+    for (auto segRange : segRanges) {
+        segRange.first.display();
+        cout << " ";
+        KVRange kvRange;
+        segRange.second->get_globalRange(kvRange);
+        if (!(kvRange == segRange.first)) {
+            cout << "inconsistency detected!" << endl;
+            cout << "metadata: "; 
+            segRange.first.display();
+            cout << endl;
+            cout << "data: ";
+            kvRange.display();
+            cout << endl;
+            exit(-1);
+        }
+    }
+    cout << endl;
     return;
 }
 
@@ -349,14 +380,16 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
     PSegment* new_seg = NULL;
     int up_right = 0;
     int up_left = 0;
+    int btm_left = 0;
+    int btm_right = 0;
     for (auto overlap_seg : overlapped_segs) {
         if (up_right == run->size) {
             /* almost impossible */
             new_segs.push_back(overlap_seg);
             continue;
         }
-        int btm_left = overlap_seg->start;
-        int btm_right = btm_left;
+        btm_left = overlap_seg->start;
+        btm_right = btm_left;
         auto up_key = run->key_entry[up_right].key;
         /* step 1: skip the non-overlapped keys */
         while (btm_right < overlap_seg->end) {
@@ -386,40 +419,42 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
                 btm_right++;
             }
         }
-        if (up_right == run->size) {
-            /* step 3: add new segs if run out of up key */
-            new_seg = new PSegment(run, up_left, up_right - 1);
-            run->seg_count++;
-            new_seg->depth = overlap_seg->depth + 1;
-            new_segs.push_back(new_seg);
-            /* step 4: check if the rest of the keys in the btm can build a new segs */
-            auto up_end = new_seg->get_end(up_right); 
-            while (btm_right <= overlap_seg->end) {
-                auto btm_key = overlap_seg->pRun->key_entry[btm_right].key;
-                if (strncmp(btm_key, up_end, KEY_SIZE) > 0)
-                    break;
-                btm_right++;
-            }
-            if (overlap_seg->end - btm_right >= RUN_SIZE / 4) {
-                new_seg = new PSegment(overlap_seg->pRun, btm_right, overlap_seg->end);
-                new_seg->pRun->seg_count++;
-                new_seg->depth = overlap_seg->depth;
-                new_segs.push_back(new_seg);
-            }
-        }
     }
+    auto overlap_seg = overlapped_segs.back();
     while (up_right < run->size) {
         auto last_run = overlapped_segs.back()->pRun;
         auto last_index = overlapped_segs.back()->end;
         run->key_entry[up_right].next_key = last_index;
         run->key_entry[up_right].next_run = last_run;
         up_right++;
-        if (up_right == run->size - 1) {
-            new_seg = new PSegment(run, up_left, up_right - 1);
-            run->seg_count++;
-            new_seg->depth = overlapped_segs.back()->depth + 1;
-            new_segs.push_back(new_seg);
-        }
+    }
+    /* step 3: add new segs if run out of up key */
+    new_seg = new PSegment(run, up_left, up_right - 1);
+    run->seg_count++;
+    new_seg->depth = overlap_seg->depth + 1;
+    new_segs.push_back(new_seg);
+    /* step 4: check if the rest of the keys in the btm can build a new segs */
+    auto up_end = new_seg->get_end(up_right); 
+    while (btm_right <= overlap_seg->end) {
+        auto btm_key = overlap_seg->pRun->key_entry[btm_right].key;
+        if (strncmp(btm_key, up_end, KEY_SIZE) > 0)
+            break;
+        btm_right++;
+    }
+    if (overlap_seg->end - btm_right >= RUN_SIZE / 4) {
+        new_seg = new PSegment(overlap_seg->pRun, btm_right, overlap_seg->end);
+        new_seg->pRun->seg_count++;
+        new_seg->depth = overlap_seg->depth;
+        new_segs.push_back(new_seg);
+    }
+    /* built a new layer */
+    cout << "old layers: ";
+    for (auto overlap_seg : overlapped_segs) {
+        overlap_seg->display();
+    }
+    cout << "new layers: ";
+    for (auto new_seg : new_segs) {
+        new_seg->display();
     }
     del(overlapped_segs);
     add(new_segs);
@@ -441,7 +476,7 @@ void MetaTable::build_layer(persistent_ptr<PRun> run) {
     return;
 }
 /* ###################### PRun ######################### */
-PRun::PRun(): size(0), seg_count(1) {
+PRun::PRun(): size(0), seg_count(0) {
 }
 PRun::~PRun() {
 }
@@ -456,6 +491,7 @@ PSegment::PSegment(persistent_ptr<PRun> p_run, size_t start_i, size_t end_i)
     : pRun(p_run), start(start_i), end(end_i) {
 }
 PSegment::~PSegment() {
+    pRun->seg_count--;
     if (pRun->seg_count == 0) {
         cout << "delete a pRun" << endl;
         delete_persistent_atomic<PRun>(pRun);
@@ -510,12 +546,21 @@ char* PSegment::get_end(int index) {
     auto cur_run = pRun;
     auto cur_index = index;
     while (cur_run && cur_index != -1) {
-        end_key = cur_run->key_entry[cur_index].key;
+        auto next_key = cur_run->key_entry[cur_index].key;
+        if (end_key == NULL || strncmp(next_key, end_key, KEY_SIZE) > 0)
+            end_key = next_key;
         index = cur_index;
         cur_index = cur_run->key_entry[index].next_key;
         cur_run = cur_run->key_entry[index].next_run;
     }
     return end_key;
+}
+/* display: display the key range */
+void PSegment::display() {
+    KVRange kvRange;
+    get_globalRange(kvRange);
+    kvRange.display();
+    return;
 }
 
 /* #################### Implementations of Run ############################### */
