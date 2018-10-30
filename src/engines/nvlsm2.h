@@ -171,8 +171,9 @@ class PRun {
         KeyEntry key_entry[RUN_SIZE];
         char vals[VAL_SIZE * RUN_SIZE];
         size_t size;
-        size_t seg_count;
+        size_t valid_key;
         void get_range(KVRange& range);
+        void display();
 };
 
 /* persistent segment in a PRun */
