@@ -174,6 +174,10 @@ class PRun {
         size_t valid_key;
         void get_range(KVRange& range);
         void display();
+        bool find_key(string& key, string& val, int left, int right);
+        bool find_key_from_two(string& key, string& val, 
+                persistent_ptr<PRun> next_left, int left, 
+                persistent_ptr<PRun> next_right, int right);
 };
 
 /* persistent segment in a PRun */
@@ -183,7 +187,7 @@ class PSegment {
         size_t start;
         size_t end;
         size_t depth;
-        size_t search(string key, string& value);
+        bool search(string key, string& value);
         char* get_end(int index);
         void get_localRange(KVRange& kvRange);
         void get_globalRange(KVRange& kvRange);

@@ -151,6 +151,10 @@ KVStatus NVLsm2::Get(const string& key, string* value) {
     for (int i = 0; i < meta_table.size(); i++) {
         //cout << "total " << meta_table.size() << " component";
         //cout << ": searchng in compoent " << i << endl;
+        if (meta_table[i].search(key, val)) {
+            value->append(val);
+        }
+        return OK;
     }
     //cout << key << " not found" << endl;
     return NOT_FOUND;
@@ -347,8 +351,20 @@ void MetaTable::display() {
 
 /* search: search a key / overlapped ranges in a component */
 bool MetaTable::search(const string& key, string& value) {
-    // to-do
-    return true;
+    KVRange kvRange;
+    kvRange.start_key = key;
+    kvRange.end_key = key;
+    vector<PSegment*> segs;
+    pthread_rwlock_rdlock(&rwlock);
+    search(kvRange, segs);
+    for (auto seg : segs) {
+        if (seg->search(key, value)) {
+            pthread_rwlock_unlock(&rwlock);
+            return true;
+        }
+    }
+    pthread_rwlock_unlock(&rwlock);
+    return false;
 }
 void MetaTable::search(KVRange& kvRange, vector<PSegment*>& segs) {
     if (segRanges.empty() || segRanges.size() == 0)
@@ -423,16 +439,15 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
             btm_right = btm_left;
         }
         /* step 2: build the link */
-        auto up_key = run->key_entry[up_right].key;
         while (up_right < run->size && btm_right <= overlap_seg->end) {
             auto btm_key = overlap_seg->pRun->key_entry[btm_right].key;
-            up_key = run->key_entry[up_right].key;
+            auto up_key = run->key_entry[up_right].key;
             if (strncmp(up_key, btm_key, KEY_SIZE) <= 0) {
                 run->key_entry[up_right].next_key = btm_right;
                 run->key_entry[up_right].next_run = overlap_seg->pRun;
-                up_right++;
                 int cur_depth = overlap_seg->depth + 1;
                 max_depth = max_depth > cur_depth ? max_depth : cur_depth;
+                up_right++;
             } else {
                 btm_right++;
             }
@@ -441,9 +456,10 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
     /* step 3: add new segs for the overlapped ranges */
     new_seg = create_pseg(run, up_left, up_right - 1, max_depth);
     new_segs.push_back(new_seg);
-    if (up_right < run->size - 1) {
+    if (up_right <= run->size - 1) {
         new_seg = create_pseg(run, up_right, run->size - 1, 1);
         new_segs.push_back(new_seg);
+        up_right = run->size - 1;
     }
     /* step 4: check if the rest of the keys in the btm can build a new segs */
     auto up_end = new_seg->get_end(up_right); 
@@ -454,9 +470,10 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
             break;
         btm_right++;
     }
-    if (btm_right < last_seg->end) {
+    if (btm_right <= last_seg->end) {
         new_seg = create_pseg(last_seg->pRun, btm_right, last_seg->end, last_seg->depth);
         new_segs.push_back(new_seg);
+        btm_right = last_seg->end;
     }
     /* built a new layer */
     cout << "up run: ";
@@ -508,6 +525,72 @@ void PRun::get_range(KVRange& range) {
     range.end_key.assign(key_entry[size - 1].key, KEY_SIZE);
     return;
 }
+/* find a key in prun within a range */
+bool PRun::find_key_from_two(string& key, string& value,
+        persistent_ptr<PRun> left_run, int left, 
+        persistent_ptr<PRun> right_run, int right) {
+    int left_size = left_run->size;
+    auto left_end = left_run->key_entry[left_size - 1].key;
+    if (strncmp(left_end, key.c_str(), KEY_SIZE) > 0) {
+        return left_run->find_key(key, value, left, left_size - 1);
+    } else {
+        return right_run->find_key(key, value, 0, right);
+    }
+    return false;
+}
+bool PRun::find_key(string& key, string& value, int left, int right) {
+    if (left > right)
+        return false;
+    int mid = -1;
+    while (left <= right) {
+        int mid = left + (right - left) / 2;
+        int res = strncmp(key_entry[mid].key, key.c_str(), KEY_SIZE);
+        if (res == 0) {
+            value.assign(key_entry[mid].p_val, key_entry[mid].val_len);
+            return true;
+        } else if (res > 0) {
+            right = mid - 1;
+        } else {
+            left = mid + 1;
+        }
+    }
+    int next_left = -1;
+    int next_right = -1;
+    auto next_run = key_entry[mid].next_run;
+    if (next_run) {
+        /* having a bottom layer */
+        if (strncmp(key_entry[mid].key, key.c_str(), KEY_SIZE) < 0) {
+            next_left = key_entry[mid].next_key;
+            if (mid < size - 1) {
+                auto right_run = key_entry[mid + 1].next_run;
+                next_right = key_entry[mid + 1].next_key;
+                if (right_run == next_run) {
+                    return next_run->find_key(key, value, next_left, next_right);
+                } else {
+                    return find_key_from_two(key, value, 
+                            next_run, next_left, right_run, next_right);
+                }
+            } else {
+                return next_run->find_key(key, value, next_left, next_left);
+            }
+        } else {
+            next_right = key_entry[mid].next_key;
+            if (mid > 0) {
+                next_left = mid - 1;
+                auto left_run = key_entry[mid - 1].next_run;
+                if (left_run == next_run) {
+                    return next_run->find_key(key, value, next_left, next_right);
+                } else {
+                    return find_key_from_two(key, value, 
+                            left_run, next_left, next_run, next_right);
+                }
+            } else {
+                return next_run->find_key(key, value, next_right, next_right);
+            }
+        } 
+    }
+    return false;
+}
 /* ##################### PSegment ############################################# */
 PSegment::PSegment(persistent_ptr<PRun> p_run, size_t start_i, size_t end_i)
     : pRun(p_run), start(start_i), end(end_i) {
@@ -520,23 +603,8 @@ PSegment::~PSegment() {
  *       value - the value of the key
  * return: index of the key in the prun
  * */
-size_t PSegment::search(string key, string& value) {
-    int left = start;
-    int right = end;
-    auto key_entry = pRun->key_entry;
-    while (left < right) {
-        int mid = left + (right - left) / 2;
-        int res = strncmp(key.c_str(), key_entry[mid].key, KEY_SIZE);
-        if (res == 0) {
-            value.assign(key_entry[mid].p_val, key_entry[mid].val_len);
-            return mid;
-        } else if (res > 0) {
-            left = mid + 1;
-        } else {
-            right = mid - 1;
-        }
-    }
-    return -1;
+bool PSegment::search(string key, string& value) {
+    return pRun->find_key(key, value, start, end);
 }
 
 /* get_range: get the kvrange of the top layer */
