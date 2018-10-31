@@ -153,10 +153,11 @@ KVStatus NVLsm2::Get(const string& key, string* value) {
         //cout << ": searchng in compoent " << i << endl;
         if (meta_table[i].search(key, val)) {
             value->append(val);
+            return OK;
         }
-        return OK;
     }
-    //cout << key << " not found" << endl;
+    cout << key << " not found" << endl;
+    exit(-1);
     return NOT_FOUND;
 }
 
@@ -454,6 +455,22 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
         }
     }
     /* step 3: add new segs for the overlapped ranges */
+    auto last_seg = overlapped_segs.back();
+    auto btm_end = last_seg->get_end(btm_right); 
+    /* if we have up keys remain, we will run out of btm key */
+    while (up_right < run->size) {
+        auto cur_up = run->key_entry[up_right].key;
+        if (strncmp(cur_up, btm_end, KEY_SIZE) > 0)
+            break;
+        /* if the subsequent key are in the range */
+        run->key_entry[up_right].next_key = last_seg->end;
+        run->key_entry[up_right].next_run = last_seg->pRun;
+        int cur_depth = last_seg->depth + 1;
+        max_depth = max_depth > cur_depth ? max_depth : cur_depth;
+        up_right++;
+    } 
+    cout << "creating seg for overlapped ranges, left = " 
+        << up_left << " , up_right = " << up_right - 1 << endl;
     new_seg = create_pseg(run, up_left, up_right - 1, max_depth);
     new_segs.push_back(new_seg);
     if (up_right <= run->size - 1) {
@@ -462,11 +479,11 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
         up_right = run->size - 1;
     }
     /* step 4: check if the rest of the keys in the btm can build a new segs */
+    /* if we have btm keys remain */
     auto up_end = new_seg->get_end(up_right); 
-    auto last_seg = overlapped_segs.back();
     while (btm_right <= last_seg->end) {
         auto btm_key = last_seg->pRun->key_entry[btm_right].key;
-        if (strncmp(btm_key, up_end, KEY_SIZE) >= 0)
+        if (strncmp(btm_key, up_end, KEY_SIZE) > 0)
             break;
         btm_right++;
     }
@@ -539,11 +556,19 @@ bool PRun::find_key_from_two(string& key, string& value,
     return false;
 }
 bool PRun::find_key(string& key, string& value, int left, int right) {
-    if (left > right)
-        return false;
+    cout << key << ": find key in the prun: ";
+    KVRange kvRange;
+    get_range(kvRange);
+    kvRange.display();
+    cout << " left = " << left << ", right = " << right;
+    cout << endl;
+    if (left > right) {
+        cout << "error happends! left > right when binary searching" << endl;
+        exit(-1);
+    }
     int mid = -1;
     while (left <= right) {
-        int mid = left + (right - left) / 2;
+        mid = left + (right - left) / 2;
         int res = strncmp(key_entry[mid].key, key.c_str(), KEY_SIZE);
         if (res == 0) {
             value.assign(key_entry[mid].p_val, key_entry[mid].val_len);
@@ -554,17 +579,24 @@ bool PRun::find_key(string& key, string& value, int left, int right) {
             left = mid + 1;
         }
     }
+    string mid_key;
+    mid_key.assign(key_entry[mid].key, KEY_SIZE);
+    cout << "search terminate at " << mid << ": " << mid_key << endl;
     int next_left = -1;
     int next_right = -1;
     auto next_run = key_entry[mid].next_run;
     if (next_run) {
         /* having a bottom layer */
-        if (strncmp(key_entry[mid].key, key.c_str(), KEY_SIZE) < 0) {
+        auto mid_key = key_entry[mid].key;
+        if (strncmp(mid_key, key.c_str(), KEY_SIZE) < 0) {
             next_left = key_entry[mid].next_key;
             if (mid < size - 1) {
-                auto right_run = key_entry[mid + 1].next_run;
+                int next_index = mid + 1;
                 next_right = key_entry[mid + 1].next_key;
+                auto right_run = key_entry[next_index].next_run;
                 if (right_run == next_run) {
+                    cout << "smaller mid and same next run, next_left = " 
+                        << next_left << " next_right = " << next_right << endl;
                     return next_run->find_key(key, value, next_left, next_right);
                 } else {
                     return find_key_from_two(key, value, 
@@ -576,9 +608,11 @@ bool PRun::find_key(string& key, string& value, int left, int right) {
         } else {
             next_right = key_entry[mid].next_key;
             if (mid > 0) {
-                next_left = mid - 1;
                 auto left_run = key_entry[mid - 1].next_run;
+                next_left = key_entry[mid - 1].next_key;
                 if (left_run == next_run) {
+                    cout << "larger mid and same next run, next_left = " 
+                        << next_left << " next_right = " << next_right << endl;
                     return next_run->find_key(key, value, next_left, next_right);
                 } else {
                     return find_key_from_two(key, value, 
@@ -588,6 +622,8 @@ bool PRun::find_key(string& key, string& value, int left, int right) {
                 return next_run->find_key(key, value, next_right, next_right);
             }
         } 
+    } else {
+        cout << "does not have next layers" << endl;
     }
     return false;
 }
