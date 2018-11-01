@@ -188,9 +188,9 @@ class PSegment {
         size_t end;
         size_t depth;
         bool search(string key, string& value);
-        char* get_end(int index);
+        char* get_key(int index);
         void get_localRange(KVRange& kvRange);
-        void get_globalRange(KVRange& kvRange);
+        //void get_globalRange(KVRange& kvRange);
         void display();
         PSegment(persistent_ptr<PRun> p_run, size_t start_i, size_t end_i);
         ~PSegment();

@@ -150,14 +150,14 @@ KVStatus NVLsm2::Get(const string& key, string* value) {
 
     for (int i = 0; i < meta_table.size(); i++) {
         //cout << "total " << meta_table.size() << " component";
-        //cout << ": searchng in compoent " << i << endl;
+        //cout << ": searchng " << key << " in compoent " << i << endl;
         if (meta_table[i].search(key, val)) {
             value->append(val);
             return OK;
         }
     }
-    cout << key << " not found" << endl;
-    exit(-1);
+    //cout << key << " not found" << endl;
+    //exit(-1);
     return NOT_FOUND;
 }
 
@@ -287,14 +287,14 @@ size_t MetaTable::getSize() {
 /* add: add metadata for a segment/segments */
 void MetaTable::add(PSegment* seg) {
     KVRange kvRange;
-    seg->get_globalRange(kvRange);
+    seg->get_localRange(kvRange);
     segRanges[kvRange] = seg;
     return;
 }
 void MetaTable::add(vector<PSegment*> segs) {
     for (auto seg : segs) {
         KVRange kvRange;
-        seg->get_globalRange(kvRange);
+        seg->get_localRange(kvRange);
         segRanges[kvRange] = seg;
     }
     return;
@@ -304,7 +304,7 @@ void MetaTable::del(vector<PSegment*> segs) {
     int count = 0;
     for (auto seg : segs) {
         KVRange kvRange;
-        seg->get_globalRange(kvRange);
+        seg->get_localRange(kvRange);
         count += segRanges.erase(kvRange);
         delete seg;
     }
@@ -317,7 +317,7 @@ void MetaTable::del(vector<PSegment*> segs) {
 void MetaTable::del(PSegment* seg) {
     int count = 0;
     KVRange kvRange;
-    seg->get_globalRange(kvRange);
+    seg->get_localRange(kvRange);
     count += segRanges.erase(kvRange);
     if (count != 1) {
         cout << "delete error: delete " << count << " of 1" << endl;
@@ -329,12 +329,12 @@ void MetaTable::del(PSegment* seg) {
 
 /* display: display the ranges in the current component */
 void MetaTable::display() {
-    cout << segRanges.size() << " ranges." << endl;
+    //cout << segRanges.size() << " ranges." << endl;
     for (auto segRange : segRanges) {
         segRange.first.display();
         cout << " ";
         KVRange kvRange;
-        segRange.second->get_globalRange(kvRange);
+        segRange.second->get_localRange(kvRange);
         if (!(kvRange == segRange.first)) {
             cout << "inconsistency detected!" << endl;
             cout << "metadata: "; 
@@ -358,6 +358,8 @@ bool MetaTable::search(const string& key, string& value) {
     vector<PSegment*> segs;
     pthread_rwlock_rdlock(&rwlock);
     search(kvRange, segs);
+    if (segs.size() == 0)
+        cout << "No range found for key: " << key << endl; 
     for (auto seg : segs) {
         if (seg->search(key, value)) {
             pthread_rwlock_unlock(&rwlock);
@@ -372,14 +374,18 @@ void MetaTable::search(KVRange& kvRange, vector<PSegment*>& segs) {
         return;
     // binary search for component i > 1
     KVRange end_range(kvRange.end_key, kvRange.end_key);
-    //cout << "kvrange:" << kvrange.start_key << "," << kvrange.end_key << endl;
-    //cout << "range size2: " << ranges.size() << endl;
+    //cout << "kvrange:" << kvRange.start_key << "," << kvRange.end_key << endl;
+    //cout << "current commopont: ";
+    //display();
     auto it_high = segRanges.upper_bound(end_range);
-    while (it_high == segRanges.end() || kvRange.start_key <= it_high->first.end_key) {
-        if (it_high == segRanges.end()) {
-            it_high--;
-            continue;
-        }
+    if (it_high == segRanges.end()) {
+        /* every start key of range is smaller than the target key 
+         * then go to the last element 
+         * */
+        it_high--; 
+    }
+    while (kvRange.start_key <= it_high->first.end_key) {
+        //cout << "find a range for key: " << kvRange.start_key << endl;
         if (kvRange.end_key >= it_high->first.start_key)
             segs.push_back(it_high->second);
         if (it_high == segRanges.begin())
@@ -399,7 +405,7 @@ PSegment* create_pseg(persistent_ptr<PRun> run, int start, int end, int depth) {
     return new_seg;
 }
 void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun> run) {
-    cout << "start to build a new layer" << endl;
+    //cout << "start to build a new layer" << endl;
     if (overlapped_segs.size() == 0)
         return;
     vector<PSegment*> new_segs;
@@ -414,9 +420,9 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
     btm_left = begin_seg->start;
     btm_right = btm_left;
     auto up_begin = run->key_entry[0].key;
-    /* step 1: skip the non-overlapped keys */
+    /* step 1: skip the non-overlapped keys at the beginning */
     while (btm_right <= begin_seg->end) {
-        auto btm_end = begin_seg->get_end(btm_right);
+        auto btm_end = begin_seg->get_key(btm_right);
         if (strncmp(btm_end, up_begin, KEY_SIZE) >= 0)
             break;
         btm_right++;
@@ -427,6 +433,7 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
         new_segs.push_back(new_seg);
         btm_left = btm_right;
     }
+    /* step 2: add the overlap segs */
     for (int i = 0; i < overlapped_segs.size(); i++) {
         auto overlap_seg = overlapped_segs[i];
         if (up_right == run->size) {
@@ -439,7 +446,6 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
             btm_left = overlap_seg->start;
             btm_right = btm_left;
         }
-        /* step 2: build the link */
         while (up_right < run->size && btm_right <= overlap_seg->end) {
             auto btm_key = overlap_seg->pRun->key_entry[btm_right].key;
             auto up_key = run->key_entry[up_right].key;
@@ -454,59 +460,56 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
             }
         }
     }
-    /* step 3: add new segs for the overlapped ranges */
     auto last_seg = overlapped_segs.back();
-    auto btm_end = last_seg->get_end(btm_right); 
+    auto btm_end = last_seg->get_key(btm_right); 
     /* if we have up keys remain, we will run out of btm key */
-    while (up_right < run->size) {
-        auto cur_up = run->key_entry[up_right].key;
-        if (strncmp(cur_up, btm_end, KEY_SIZE) > 0)
-            break;
-        /* if the subsequent key are in the range */
-        run->key_entry[up_right].next_key = last_seg->end;
-        run->key_entry[up_right].next_run = last_seg->pRun;
-        int cur_depth = last_seg->depth + 1;
-        max_depth = max_depth > cur_depth ? max_depth : cur_depth;
-        up_right++;
-    } 
-    cout << "creating seg for overlapped ranges, left = " 
-        << up_left << " , up_right = " << up_right - 1 << endl;
-    new_seg = create_pseg(run, up_left, up_right - 1, max_depth);
+    if (up_right < run->size) {
+        while (up_right < run->size) {
+            auto cur_up = run->key_entry[up_right].key;
+            if (strncmp(cur_up, btm_end, KEY_SIZE) > 0)
+                break;
+            /* if the subsequent key are in the range */
+            run->key_entry[up_right].next_key = last_seg->end;
+            run->key_entry[up_right].next_run = last_seg->pRun;
+            int cur_depth = last_seg->depth + 1;
+            max_depth = max_depth > cur_depth ? max_depth : cur_depth;
+            up_right++;
+        } 
+    } else {
+        /* if we have btm keys remain */
+        if (btm_right <= last_seg->end) {
+            auto up_end = run->key_entry[run->size - 1].key; 
+            while (btm_right >= 0) {
+                auto btm_key = last_seg->pRun->key_entry[btm_right].key;
+                if (strncmp(btm_key, up_end, KEY_SIZE) <= 0)
+                    break;
+                btm_right--;
+            }
+        }
+    }
+    new_seg = create_pseg(run, up_left, run->size - 1, max_depth);
     new_segs.push_back(new_seg);
-    if (up_right <= run->size - 1) {
-        new_seg = create_pseg(run, up_right, run->size - 1, 1);
-        new_segs.push_back(new_seg);
-        up_right = run->size - 1;
-    }
-    /* step 4: check if the rest of the keys in the btm can build a new segs */
-    /* if we have btm keys remain */
-    auto up_end = new_seg->get_end(up_right); 
-    while (btm_right <= last_seg->end) {
-        auto btm_key = last_seg->pRun->key_entry[btm_right].key;
-        if (strncmp(btm_key, up_end, KEY_SIZE) > 0)
-            break;
-        btm_right++;
-    }
-    if (btm_right <= last_seg->end) {
-        new_seg = create_pseg(last_seg->pRun, btm_right, last_seg->end, last_seg->depth);
+    /* step 3 add the non-overlapped keys at the end */
+    if (btm_right < last_seg->end) {
+        new_seg = create_pseg(last_seg->pRun, btm_right + 1, last_seg->end, last_seg->depth);
         new_segs.push_back(new_seg);
         btm_right = last_seg->end;
     }
     /* built a new layer */
-    cout << "up run: ";
-    run->display();
-    cout << "overlapped segs: ";
-    for (auto overlap_seg : overlapped_segs) {
-        overlap_seg->display();
-    }
-    cout << "new layers: ";
-    for (auto new_seg : new_segs) {
-        new_seg->display();
-    }
-    cout << endl;
+    //cout << "up run: ";
+    //run->display();
+    //cout << "overlapped segs: ";
+    //for (auto overlap_seg : overlapped_segs) {
+    //    overlap_seg->display();
+    //}
+    //cout << "new layers: ";
+    //for (auto new_seg : new_segs) {
+    //    new_seg->display();
+    //}
+    //cout << endl;
     del(overlapped_segs);
     add(new_segs);
-    cout << "finish building a new layer" << endl;
+    //cout << "finish building a new layer" << endl;
     return;
 }
 void MetaTable::build_layer(persistent_ptr<PRun> run) {
@@ -514,7 +517,7 @@ void MetaTable::build_layer(persistent_ptr<PRun> run) {
     vector<PSegment*> overlapped_segs;
     KVRange kvRange;
     PSegment* seg = new PSegment(run, 0, run->size - 1);
-    seg->get_globalRange(kvRange);
+    seg->get_localRange(kvRange);
     search(kvRange, overlapped_segs);
     if (overlapped_segs.size() == 0) {
         add(seg);
@@ -556,12 +559,10 @@ bool PRun::find_key_from_two(string& key, string& value,
     return false;
 }
 bool PRun::find_key(string& key, string& value, int left, int right) {
-    cout << key << ": find key in the prun: ";
-    KVRange kvRange;
-    get_range(kvRange);
-    kvRange.display();
-    cout << " left = " << left << ", right = " << right;
-    cout << endl;
+    //cout << key << ": find key in the prun: ";
+    //display();
+    //cout << " left = " << left << ", right = " << right;
+    //cout << endl;
     if (left > right) {
         cout << "error happends! left > right when binary searching" << endl;
         exit(-1);
@@ -581,7 +582,7 @@ bool PRun::find_key(string& key, string& value, int left, int right) {
     }
     string mid_key;
     mid_key.assign(key_entry[mid].key, KEY_SIZE);
-    cout << "search terminate at " << mid << ": " << mid_key << endl;
+    //cout << "search terminate at " << mid << ": " << mid_key << endl;
     int next_left = -1;
     int next_right = -1;
     auto next_run = key_entry[mid].next_run;
@@ -595,15 +596,15 @@ bool PRun::find_key(string& key, string& value, int left, int right) {
                 next_right = key_entry[mid + 1].next_key;
                 auto right_run = key_entry[next_index].next_run;
                 if (right_run == next_run) {
-                    cout << "smaller mid and same next run, next_left = " 
-                        << next_left << " next_right = " << next_right << endl;
+                    //cout << "smaller mid and same next run, next_left = " 
+                    //    << next_left << " next_right = " << next_right << endl;
                     return next_run->find_key(key, value, next_left, next_right);
                 } else {
                     return find_key_from_two(key, value, 
                             next_run, next_left, right_run, next_right);
                 }
             } else {
-                return next_run->find_key(key, value, next_left, next_left);
+                return next_run->find_key(key, value, next_left, next_run->size - 1);
             }
         } else {
             next_right = key_entry[mid].next_key;
@@ -611,20 +612,20 @@ bool PRun::find_key(string& key, string& value, int left, int right) {
                 auto left_run = key_entry[mid - 1].next_run;
                 next_left = key_entry[mid - 1].next_key;
                 if (left_run == next_run) {
-                    cout << "larger mid and same next run, next_left = " 
-                        << next_left << " next_right = " << next_right << endl;
+                    //cout << "larger mid and same next run, next_left = " 
+                    //    << next_left << " next_right = " << next_right << endl;
                     return next_run->find_key(key, value, next_left, next_right);
                 } else {
                     return find_key_from_two(key, value, 
                             left_run, next_left, next_run, next_right);
                 }
             } else {
-                return next_run->find_key(key, value, next_right, next_right);
+                return next_run->find_key(key, value, 0, next_right);
             }
         } 
-    } else {
-        cout << "does not have next layers" << endl;
-    }
+    } //else {
+        //cout << "does not have next layers" << endl;
+    //}
     return false;
 }
 /* ##################### PSegment ############################################# */
@@ -652,16 +653,17 @@ void PSegment::get_localRange(KVRange& kvRange) {
 }
 
 /* get_globalRange: get the kvrange of all layers */
-void PSegment::get_globalRange(KVRange& kvRange) {
+/*void PSegment::get_globalRange(KVRange& kvRange) {
     auto key_entry = pRun->key_entry;
     kvRange.start_key.assign(key_entry[start].key, KEY_SIZE);
     kvRange.end_key.assign(get_end(end), KEY_SIZE);
     return;
-}
+}*/
 
 /* get_end: get the real end for an index 
  * para: index -- the location to check 
  * */
+/*
 char* PSegment::get_end(int index) {
     char* end_key = NULL;
     auto cur_run = pRun;
@@ -676,10 +678,14 @@ char* PSegment::get_end(int index) {
     }
     return end_key;
 }
+*/
+char* PSegment::get_key(int index) {
+    return pRun->key_entry[index].key;
+}
 /* display: display the key range */
 void PSegment::display() {
     KVRange kvRange;
-    get_globalRange(kvRange);
+    get_localRange(kvRange);
     kvRange.display();
     return;
 }
