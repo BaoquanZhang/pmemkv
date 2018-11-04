@@ -67,15 +67,17 @@ static void persist(void * v_nvlsm) {
         i++;
     }
     p_run->size = i;
-    p_run->valid_key = i;
     p_run.persist();
     delete run;
     /* start to build layers */ 
-    cout << "before building new layers: " << endl;
-    nvlsm->display();
+    //cout << "before building new layers: " << endl;
+    //nvlsm->display();
     meta_table->build_layer(p_run);
-    cout << "after building new layers: " << endl;
-    nvlsm->display();
+    cout << "C0 has ";
+    meta_table->display();
+    cout << endl;
+    //cout << "after building new layers: " << endl;
+    //nvlsm->display();
     //cout << "persist stop" << endl;
 }
 /* ######################## Log #########################################*/
@@ -143,10 +145,11 @@ KVStatus NVLsm2::Get(const string& key, string* value) {
     //cout << "start to get key: " << key << endl;
     string val;
     LOG("Searching in memory buffer");
+    /*
     if (mem_table->search(key, val)) {
         value->append(val);
         return OK;
-    }
+    }*/
 
     for (int i = 0; i < meta_table.size(); i++) {
         //cout << "total " << meta_table.size() << " component";
@@ -164,10 +167,9 @@ KVStatus NVLsm2::Get(const string& key, string* value) {
 KVStatus NVLsm2::Put(const string& key, const string& value) {
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
     //cout << "Put key=" << key.c_str() << ", value.size=" << to_string(value.size()) << endl;;
-    while (mem_table->getSize() > com_ratio)
-        usleep(SLOW_DOWN_US); 
     if (mem_table->append(key, value)) {
         /* write buffer is filled up if queue size is larger than 4, wait */
+        while (mem_table->getSize() > 0);
         mem_table->push_queue();
         //cout << "memTable: " << mem_table->getSize() << endl; 
         Task * persist_task = new Task(&persist, (void *) this);
@@ -326,7 +328,10 @@ void MetaTable::del(PSegment* seg) {
     delete seg;
     return;
 }
-
+/* merge: merge all layers of a seg */
+void merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
+    KVRange kvRange;
+}
 /* display: display the ranges in the current component */
 void MetaTable::display() {
     //cout << segRanges.size() << " ranges." << endl;
@@ -545,20 +550,13 @@ void PRun::get_range(KVRange& range) {
     range.end_key.assign(key_entry[size - 1].key, KEY_SIZE);
     return;
 }
-/* find a key in prun within a range */
-bool PRun::find_key_from_two(string& key, string& value,
-        persistent_ptr<PRun> left_run, int left, 
-        persistent_ptr<PRun> right_run, int right) {
-    int left_size = left_run->size;
-    auto left_end = left_run->key_entry[left_size - 1].key;
-    if (strncmp(left_end, key.c_str(), KEY_SIZE) > 0) {
-        return left_run->find_key(key, value, left, left_size - 1);
-    } else {
-        return right_run->find_key(key, value, 0, right);
-    }
-    return false;
-}
-bool PRun::find_key(string& key, string& value, int left, int right) {
+
+/* find_key: looking for a key in a run within the start -- end
+ * return: 0 -- we find the key
+ *         1 -- can not find and the mid is larger than key
+ *         -1 -- can not find and the mid is smaller than the key
+ * */
+int PRun::find_key(const string& key, string& value, int left, int right, int& mid) {
     //cout << key << ": find key in the prun: ";
     //display();
     //cout << " left = " << left << ", right = " << right;
@@ -567,67 +565,22 @@ bool PRun::find_key(string& key, string& value, int left, int right) {
         cout << "error happends! left > right when binary searching" << endl;
         exit(-1);
     }
-    int mid = -1;
+    int res = 0;
     while (left <= right) {
         mid = left + (right - left) / 2;
-        int res = strncmp(key_entry[mid].key, key.c_str(), KEY_SIZE);
+        res = strncmp(key_entry[mid].key, key.c_str(), KEY_SIZE);
         if (res == 0) {
             value.assign(key_entry[mid].p_val, key_entry[mid].val_len);
-            return true;
+            return res;
         } else if (res > 0) {
             right = mid - 1;
         } else {
             left = mid + 1;
         }
     }
-    string mid_key;
-    mid_key.assign(key_entry[mid].key, KEY_SIZE);
-    //cout << "search terminate at " << mid << ": " << mid_key << endl;
-    int next_left = -1;
-    int next_right = -1;
-    auto next_run = key_entry[mid].next_run;
-    if (next_run) {
-        /* having a bottom layer */
-        auto mid_key = key_entry[mid].key;
-        if (strncmp(mid_key, key.c_str(), KEY_SIZE) < 0) {
-            next_left = key_entry[mid].next_key;
-            if (mid < size - 1) {
-                int next_index = mid + 1;
-                next_right = key_entry[mid + 1].next_key;
-                auto right_run = key_entry[next_index].next_run;
-                if (right_run == next_run) {
-                    //cout << "smaller mid and same next run, next_left = " 
-                    //    << next_left << " next_right = " << next_right << endl;
-                    return next_run->find_key(key, value, next_left, next_right);
-                } else {
-                    return find_key_from_two(key, value, 
-                            next_run, next_left, right_run, next_right);
-                }
-            } else {
-                return next_run->find_key(key, value, next_left, next_run->size - 1);
-            }
-        } else {
-            next_right = key_entry[mid].next_key;
-            if (mid > 0) {
-                auto left_run = key_entry[mid - 1].next_run;
-                next_left = key_entry[mid - 1].next_key;
-                if (left_run == next_run) {
-                    //cout << "larger mid and same next run, next_left = " 
-                    //    << next_left << " next_right = " << next_right << endl;
-                    return next_run->find_key(key, value, next_left, next_right);
-                } else {
-                    return find_key_from_two(key, value, 
-                            left_run, next_left, next_run, next_right);
-                }
-            } else {
-                return next_run->find_key(key, value, 0, next_right);
-            }
-        } 
-    } //else {
-        //cout << "does not have next layers" << endl;
-    //}
-    return false;
+    return res;
 }
+
 /* ##################### PSegment ############################################# */
 PSegment::PSegment(persistent_ptr<PRun> p_run, size_t start_i, size_t end_i)
     : pRun(p_run), start(start_i), end(end_i) {
@@ -638,10 +591,59 @@ PSegment::~PSegment() {
 /* search: search a key in a seg 
  * para: key - key to search
  *       value - the value of the key
- * return: index of the key in the prun
+ * return: true if we find the key
  * */
-bool PSegment::search(string key, string& value) {
-    return pRun->find_key(key, value, start, end);
+bool PSegment::search(const string& key, string& value) {
+    auto cur_run = pRun;
+    int left = start;
+    int right = end;
+    int mid = 0;
+    while (cur_run) {
+        auto res = cur_run->find_key(key, value, left, right, mid);
+        if (res == 0)
+            return true;
+        else {
+            persistent_ptr<PRun> left_run;
+            persistent_ptr<PRun> right_run;
+            auto next_run = cur_run->key_entry[mid].next_run;
+            auto next_key = cur_run->key_entry[mid].next_key;
+            if (next_run == NULL)
+                break;
+            if (res < 0) {
+                left = next_key;
+                left_run = next_run;
+                right = left;
+                right_run = left_run;
+                if (mid < cur_run->size - 1) {
+                    right = cur_run->key_entry[mid + 1].next_key;
+                    right_run = cur_run->key_entry[mid + 1].next_run;
+                }
+            } else {
+                right = next_key;
+                right_run = next_run;
+                left = right;
+                left_run = right_run;
+                if (mid > 0) {
+                    left = cur_run->key_entry[mid - 1].next_key;
+                    left_run = cur_run->key_entry[mid - 1].next_run;
+                }
+            }
+            /* check if left_run and right_run are the same */
+            if (left_run == right_run) {
+                cur_run = left_run;
+            } else {
+                int left_end = left_run->size - 1;
+                if (strncmp(key.c_str(), left_run->key_entry[left_end].key, KEY_SIZE) > 0) {
+                    cur_run = right_run;
+                    left = 0;
+                } else {
+                    cur_run = left_run;
+                    right = left_run->size - 1;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 /* get_range: get the kvrange of the top layer */

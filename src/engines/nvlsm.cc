@@ -74,6 +74,9 @@ static void persist(void * v_nvlsm) {
     if (meta_table->ranges.size() > nvlsm->com_ratio)
         nvlsm->compact(0);
     //nvlsm->displayMeta();
+    //cout << "C0 has ";
+    //meta_table->display();
+    //cout << endl;
     //cout << "persist stop" << endl;
 }
 /* ######################## Log #########################################*/
@@ -207,10 +210,9 @@ KVStatus NVLsm::Get(const string& key, string* value) {
 KVStatus NVLsm::Put(const string& key, const string& value) {
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
     //cout << "Put key=" << key.c_str() << ", value.size=" << to_string(value.size()) << endl;;
-    while (mem_table->getSize() > com_ratio)
-        usleep(SLOW_DOWN_US); 
     if (mem_table->append(key, value)) {
         /* write buffer is filled up if queue size is larger than 4, wait */
+        while (mem_table->getSize() > com_ratio);
         mem_table->push_queue();
         //cout << "memTable: " << mem_table->getSize() << endl; 
         Task * persist_task = new Task(&persist, (void *) this);
@@ -620,7 +622,7 @@ bool MetaTable::search(const string &key, string &val) {
             int mid = start + (end - start) / 2;
             int res = strncmp(key.c_str(), key_entry[mid].key, KEY_SIZE);
             if (res == 0) {
-                val.assign(&(run->vals[mid * VAL_SIZE]), VAL_SIZE);
+                val.assign(run->key_entry[mid].p_val, run->key_entry[mid].val_len);
                 pthread_rwlock_unlock(&rwlock);
                 return true;
             } else if (res < 0) {

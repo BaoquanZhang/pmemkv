@@ -141,7 +141,7 @@ class Run {
 struct KeyEntry {
     char key[KEY_SIZE];
     size_t val_len;
-    persistent_ptr<char> p_val;
+    char* p_val;
 };
 class PRun {
     public:

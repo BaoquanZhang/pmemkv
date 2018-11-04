@@ -160,6 +160,7 @@ struct KeyEntry {
     size_t val_len;
     char* p_val;
     size_t next_key = -1; // offset of the bottom key, default -1
+    bool valid;
     persistent_ptr<PRun> next_run;
 };
 class PRun {
@@ -171,13 +172,9 @@ class PRun {
         KeyEntry key_entry[RUN_SIZE];
         char vals[VAL_SIZE * RUN_SIZE];
         size_t size;
-        size_t valid_key;
         void get_range(KVRange& range);
         void display();
-        bool find_key(string& key, string& val, int left, int right);
-        bool find_key_from_two(string& key, string& val, 
-                persistent_ptr<PRun> next_left, int left, 
-                persistent_ptr<PRun> next_right, int right);
+        int find_key(const string& key, string& val, int left, int right, int& mid);
 };
 
 /* persistent segment in a PRun */
@@ -187,7 +184,7 @@ class PSegment {
         size_t start;
         size_t end;
         size_t depth;
-        bool search(string key, string& value);
+        bool search(const string& key, string& value);
         char* get_key(int index);
         void get_localRange(KVRange& kvRange);
         //void get_globalRange(KVRange& kvRange);
@@ -206,6 +203,7 @@ class MetaTable {
         ~MetaTable();
         size_t getSize(); // get the size of ranges
         /* functions for segment ops in multiple layers */
+        void merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs);
         void add(vector<PSegment*> segs);
         void add(PSegment* seg);
         void del(vector<PSegment*> segs);
