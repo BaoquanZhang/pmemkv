@@ -46,7 +46,7 @@ size_t pmsize;
  * v_nvlsm: an instance of nvlsm
  * */
 static void persist(void * v_nvlsm) {
-    //cout << "persisting a mem_table!" << endl;
+    cout << "persisting a mem_table!" << endl;
     NVLsm * nvlsm = (NVLsm *) v_nvlsm;
     // get the targeting meta_table[0] 
     auto meta_table = &(nvlsm->meta_table[0]);
@@ -56,6 +56,7 @@ static void persist(void * v_nvlsm) {
     // allocate space from NVM and copy data from mem_table
     persistent_ptr<PRun> p_run;
     int i = 0;
+    cout << "allocating new run" << endl;
     make_persistent_atomic<PRun>(pmpool, p_run);
     auto key_entry = p_run->key_entry;
     auto vals = p_run->vals;
@@ -68,16 +69,17 @@ static void persist(void * v_nvlsm) {
     }
     p_run->size = i;
     // add meta data to component 0
-    p_run.persist();
-    meta_table->add(p_run);
+    //p_run.persist();
+    //meta_table->add(p_run);
     delete run;
-    if (meta_table->ranges.size() > nvlsm->com_ratio)
-        nvlsm->compact(0);
-    //nvlsm->displayMeta();
+    //if (meta_table->ranges.size() > nvlsm->com_ratio)
+    //    nvlsm->compact(0);
+    nvlsm->compact(p_run, 0);
+    nvlsm->displayMeta();
     //cout << "C0 has ";
     //meta_table->display();
     //cout << endl;
-    //cout << "persist stop" << endl;
+    cout << "persist stop" << endl;
 }
 /* ######################## Log #########################################*/
 void Log::append(string str) {
@@ -289,6 +291,34 @@ void NVLsm::compact(int comp_index) {
     LOG("stop compactiom");
 }
 
+void NVLsm::compact(persistent_ptr<PRun> run, int index) {
+    LOG("start compaction ");
+    CompactionUnit* unit = new CompactionUnit();
+    unit->up_run = run;
+    KVRange kvRange;
+    run->get_range(kvRange);
+    meta_table[index].search(kvRange, unit->low_runs);
+    /* merge sort the runs */
+    merge_sort(unit);
+    /* delete the old meta data */
+    LOG("deleting old meta data");
+    meta_log->append("delete old meta data");
+    meta_log.persist();
+    meta_table[index].del(unit->low_runs);
+    meta_log->append("add new metadata");
+    meta_log.persist();
+    if (!(meta_table[index].add(unit->new_runs))) {
+        cout << "add meta in C " << index << " error! " << endl; 
+        unit->display();
+        exit(1);
+    }
+    meta_log->append("commit compaction");
+    meta_log.persist();
+    LOG("deleting old data");
+    delete unit;
+    LOG("stop compactiom");
+}
+
 /* copy data between PRuns */
 void NVLsm::copy_kv(persistent_ptr<PRun> des_run, int des_i, persistent_ptr<PRun> src_run, int src_i) {
     auto des_entry = des_run->key_entry;
@@ -322,7 +352,7 @@ void NVLsm::merge_sort(CompactionUnit * unit) {
         pthread_rwlock_unlock(&(meta_low->rwlock));
         return;
     }
-
+    cout << "merging step1" << endl;
     unit->new_runs.emplace_back();
     make_persistent_atomic<PRun>(pmpool, unit->new_runs.back());
     auto new_run = unit->new_runs.back();
@@ -332,6 +362,7 @@ void NVLsm::merge_sort(CompactionUnit * unit) {
     for (auto low_run : low_runs) {
         int low_index = 0;
         int low_len = low_run->size;
+        cout << "merging step1.5" << endl;
         while (low_index < low_len) {
             if (up_index < up_len) {
                 /* if up run has kv pairs */
@@ -365,6 +396,7 @@ void NVLsm::merge_sort(CompactionUnit * unit) {
         }
     }
 
+    cout << "merging step2" << endl;
     /* run out of low but up remains */
     while (up_index < up_len) {
         copy_kv(new_run, new_index, up_run, up_index);
