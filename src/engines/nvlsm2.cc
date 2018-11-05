@@ -145,11 +145,10 @@ KVStatus NVLsm2::Get(const string& key, string* value) {
     //cout << "start to get key: " << key << endl;
     string val;
     LOG("Searching in memory buffer");
-    /*
     if (mem_table->search(key, val)) {
         value->append(val);
         return OK;
-    }*/
+    }
 
     for (int i = 0; i < meta_table.size(); i++) {
         //cout << "total " << meta_table.size() << " component";

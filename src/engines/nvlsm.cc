@@ -73,7 +73,7 @@ static void persist(void * v_nvlsm) {
     delete run;
     if (meta_table->ranges.size() > nvlsm->com_ratio)
         nvlsm->compact(0);
-    //nvlsm->displayMeta();
+    nvlsm->displayMeta();
     //cout << "C0 has ";
     //meta_table->display();
     //cout << endl;
@@ -209,10 +209,10 @@ KVStatus NVLsm::Get(const string& key, string* value) {
 
 KVStatus NVLsm::Put(const string& key, const string& value) {
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
-    //cout << "Put key=" << key.c_str() << ", value.size=" << to_string(value.size()) << endl;;
+    //cout << "Put key=" << key.c_str() << ", value.size=" << to_string(value.size()) << endl;
     if (mem_table->append(key, value)) {
         /* write buffer is filled up if queue size is larger than 4, wait */
-        while (mem_table->getSize() > com_ratio);
+        while (mem_table->getSize() > 0);
         mem_table->push_queue();
         //cout << "memTable: " << mem_table->getSize() << endl; 
         Task * persist_task = new Task(&persist, (void *) this);
