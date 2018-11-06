@@ -69,10 +69,11 @@ static void persist(void * v_nvlsm) {
     p_run->size = i;
     // add meta data to component 0
     p_run.persist();
+    //nvlsm->compact(0, p_run);
     meta_table->add(p_run);
     delete run;
-    if (meta_table->ranges.size() > nvlsm->com_ratio)
-        nvlsm->compact(0);
+    //if (meta_table->ranges.size() > nvlsm->com_ratio)
+    //    nvlsm->compact(0);
     nvlsm->displayMeta();
     //cout << "C0 has ";
     //meta_table->display();
@@ -286,6 +287,45 @@ void NVLsm::compact(int comp_index) {
         delete unit;
         compact(comp_index + 1);
     }
+    LOG("stop compactiom");
+}
+
+void NVLsm::compact(int comp_index, persistent_ptr<PRun> pRun) {
+    LOG("start compaction ");
+    LOG("plan a compaction for the component" << comp_index);
+    int comp_count = meta_table.size();
+    if (comp_count == comp_index) {
+        meta_table.emplace_back();
+    }
+    CompactionUnit* unit = new CompactionUnit();
+    unit->index = comp_index;
+    unit->up_run = pRun;
+    KVRange kvRange;
+    pRun->get_range(kvRange);
+    meta_table[comp_index].search(kvRange, unit->low_runs);
+    /* merge sort the runs */
+    merge_sort(unit);
+    /* delete the old meta data */
+    LOG("deleting old meta data");
+    meta_log->append("delete old meta data");
+    meta_log.persist();
+    if (!(meta_table[comp_index].del(unit->low_runs))) {
+        cout << "delete meta in C " << comp_index << " error! " << endl; 
+        unit->display();
+        exit(1);
+    }
+    LOG("adding new meta data");
+    meta_log->append("add new metadata");
+    meta_log.persist();
+    if (!(meta_table[comp_index].add(unit->new_runs))) {
+        cout << "add meta in C " << comp_index << " error! " << endl; 
+        unit->display();
+        exit(1);
+    }
+    meta_log->append("commit compaction");
+    meta_log.persist();
+    LOG("deleting old data");
+    delete unit;
     LOG("stop compactiom");
 }
 

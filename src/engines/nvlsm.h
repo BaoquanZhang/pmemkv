@@ -224,6 +224,7 @@ class NVLsm : public KVEngine {
         // utility
         CompactionUnit * plan_compaction(size_t index);
         void compact(int index);
+        void compact(int index, persistent_ptr<PRun> pRun);
         void merge_sort(CompactionUnit * unit);
         void displayMeta();
         void copy_kv(persistent_ptr<PRun> des_run, int des_i, persistent_ptr<PRun> src_run, int src_i);
