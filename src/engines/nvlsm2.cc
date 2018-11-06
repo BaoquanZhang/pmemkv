@@ -328,9 +328,25 @@ void MetaTable::del(PSegment* seg) {
     delete seg;
     return;
 }
-/* merge: merge all layers of a seg */
-void merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
-    KVRange kvRange;
+/* copy_key: copy kv from src run to des run */
+void MetaTable::copy_kv(persistent_ptr<PRun> des_run, int des_i, 
+        persistent_ptr<PRun> src_run, int src_i) {
+    auto des_entry = des_run->key_entry;
+    auto des_vals = des_run->vals;
+    auto src_entry = src_run->key_entry;
+    auto src_vals = src_run->vals;
+    strncpy(des_entry[des_i].key, src_entry[src_i].key, KEY_SIZE);
+    strncpy(&des_vals[des_i * VAL_SIZE], &src_vals[src_i * VAL_SIZE], src_entry[src_i].val_len);
+    des_entry[des_i].val_len = src_entry[src_i].val_len;
+    des_entry[des_i].p_val = &des_vals[des_i * VAL_SIZE];
+    return;
+}
+/* merge: merge all layers of a seg 
+ * @param: seg -- the segment to merge 
+ *         runs -- merge results
+ * */
+/* copy data between PRuns */
+void MetaTable::merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
 }
 /* display: display the ranges in the current component */
 void MetaTable::display() {
@@ -653,34 +669,43 @@ void PSegment::get_localRange(KVRange& kvRange) {
     kvRange.end_key.assign(key_entry[end].key, KEY_SIZE);
     return;
 }
-
-/* get_globalRange: get the kvrange of all layers */
-/*void PSegment::get_globalRange(KVRange& kvRange) {
-    auto key_entry = pRun->key_entry;
-    kvRange.start_key.assign(key_entry[start].key, KEY_SIZE);
-    kvRange.end_key.assign(get_end(end), KEY_SIZE);
+/* seek: seek a key and build the search stack */
+void PSegment::seek_begin() {
+    search_stack.emplace(pRun, start);
     return;
-}*/
-
-/* get_end: get the real end for an index 
- * para: index -- the location to check 
- * */
-/*
-char* PSegment::get_end(int index) {
-    char* end_key = NULL;
-    auto cur_run = pRun;
-    auto cur_index = index;
-    while (cur_run && cur_index != -1) {
-        auto next_key = cur_run->key_entry[cur_index].key;
-        if (end_key == NULL || strncmp(next_key, end_key, KEY_SIZE) > 0)
-            end_key = next_key;
-        index = cur_index;
-        cur_index = cur_run->key_entry[index].next_key;
-        cur_run = cur_run->key_entry[index].next_run;
-    }
-    return end_key;
 }
-*/
+/* next: get the next key
+ * description: get the top element from search stack
+ *              and put right/next key into the stack
+ * */
+bool PSegment::next(RunIndex& runIndex) {
+    if (search_stack.size() == 0)
+        return false;
+    runIndex = search_stack.top();
+    search_stack.pop();
+    auto cur_run = runIndex.pRun;
+    auto index = runIndex.index;
+    if (index == end)
+        return false;
+    auto right_key = cur_run->key_entry[index + 1].key;
+    auto next_run = cur_run->key_entry[index].next_run;
+    auto next_index = cur_run->key_entry[index].next_key;
+    char* next_key = NULL;
+    if (next_run != NULL) {
+        next_key = next_run->key_entry[next_index].key;
+    }
+    search_stack.emplace(cur_run, index + 1);
+    int res = -1;
+    if (next_key != NULL) {
+        res = strncmp(right_key, next_key, KEY_SIZE);
+    }
+    if (res > 0) {
+        search_stack.emplace(next_run, next_index);
+    }
+    return true;
+}
+
+/* get_key: return a key by the index */
 char* PSegment::get_key(int index) {
     return pRun->key_entry[index].key;
 }

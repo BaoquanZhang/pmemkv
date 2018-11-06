@@ -35,6 +35,7 @@
 #include <pthread.h>
 #include <queue>
 #include <map>
+#include <stack>
 #include <unistd.h>
 #include <algorithm>
 #include <ctime>
@@ -167,8 +168,6 @@ class PRun {
     public:
         PRun();
         ~PRun();
-        //persistent_ptr<KeyEntry[RUN_SIZE]> key_entry;
-        //persistent_ptr<char[VAL_SIZE * RUN_SIZE]> vals;
         KeyEntry key_entry[RUN_SIZE];
         char vals[VAL_SIZE * RUN_SIZE];
         size_t size;
@@ -176,7 +175,15 @@ class PRun {
         void display();
         int find_key(const string& key, string& val, int left, int right, int& mid);
 };
-
+/* segment iterator */
+struct RunIndex {
+    persistent_ptr<PRun> pRun;
+    int index;
+    RunIndex(persistent_ptr<PRun> cur_run, int cur_index) {
+        pRun = cur_run;
+        index = cur_index;
+    };
+};
 /* persistent segment in a PRun */
 class PSegment {
     public:
@@ -184,10 +191,13 @@ class PSegment {
         size_t start;
         size_t end;
         size_t depth;
+        stack<RunIndex> search_stack;
+        void seek(const string& key);
+        void seek_begin();
+        bool next(RunIndex& runIndex);
         bool search(const string& key, string& value);
         char* get_key(int index);
         void get_localRange(KVRange& kvRange);
-        //void get_globalRange(KVRange& kvRange);
         void display();
         PSegment(persistent_ptr<PRun> p_run, size_t start_i, size_t end_i);
         ~PSegment();
@@ -213,6 +223,8 @@ class MetaTable {
         void build_layer(persistent_ptr<PRun> run);
         void do_build(vector<PSegment*>& overlap_segs, persistent_ptr<PRun> run);
         void display();
+        void copy_kv(persistent_ptr<PRun> des_run, int des_i, 
+                        persistent_ptr<PRun> src_run, int src_i);
 };
 
 class NVLsm2 : public KVEngine {
