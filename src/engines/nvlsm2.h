@@ -183,6 +183,10 @@ struct RunIndex {
         pRun = cur_run;
         index = cur_index;
     };
+    RunIndex() {
+        pRun = NULL;
+        index = 0;
+    };
 };
 /* persistent segment in a PRun */
 class PSegment {

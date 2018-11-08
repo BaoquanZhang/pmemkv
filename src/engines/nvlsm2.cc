@@ -347,6 +347,34 @@ void MetaTable::copy_kv(persistent_ptr<PRun> des_run, int des_i,
  * */
 /* copy data between PRuns */
 void MetaTable::merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
+    seg->seek_begin();
+    persistent_ptr<PRun> new_run;
+    make_persistent_atomic<PRun>(pmpool, new_run);
+    int new_index = 0;
+    RunIndex runIndex;
+    while (seg->next(runIndex)) {
+        char* last_key = NULL;
+        if (new_index > 0)
+            last_key = new_run->key_entry[new_index - 1].key;
+        char* new_key = runIndex.pRun->key_entry[runIndex.index].key;
+        if (last_key && strncmp(last_key, new_key, KEY_SIZE) < 0) {
+            copy_kv(new_run, new_index, runIndex.pRun, runIndex.index);
+            new_index++;
+            if (new_index == RUN_SIZE) {
+                new_run->size = new_index;
+                runs.push_back(new_run);
+                make_persistent_atomic<PRun>(pmpool, new_run);
+                new_index = 0;
+            }
+        }
+    }
+    if (new_index > 0) {
+        new_run->size = new_index;
+        runs.push_back(new_run);
+    } else {
+        delete_persistent_atomic<PRun>(new_run);
+    }
+    return;
 }
 /* display: display the ranges in the current component */
 void MetaTable::display() {
@@ -678,6 +706,17 @@ void PSegment::seek_begin() {
  * description: get the top element from search stack
  *              and put right/next key into the stack
  * */
+void check_push(stack<RunIndex>& search_stack, persistent_ptr<PRun> pRun, int index) {
+    char* last_key = NULL;
+    if (search_stack.size() > 0) {
+        auto last_runIndex = search_stack.top();
+        last_key = last_runIndex.pRun->key_entry[last_runIndex.index].key;
+    }
+    char* cur_key = pRun->key_entry[index].key;
+    if (search_stack.size() == 0 || strncmp(last_key, cur_key, KEY_SIZE) >= 0)
+        search_stack.emplace(pRun, index);
+    return;
+}
 bool PSegment::next(RunIndex& runIndex) {
     if (search_stack.size() == 0)
         return false;
@@ -694,13 +733,13 @@ bool PSegment::next(RunIndex& runIndex) {
     if (next_run != NULL) {
         next_key = next_run->key_entry[next_index].key;
     }
-    search_stack.emplace(cur_run, index + 1);
+    check_push(search_stack, cur_run, index + 1);
     int res = -1;
     if (next_key != NULL) {
         res = strncmp(right_key, next_key, KEY_SIZE);
     }
     if (res > 0) {
-        search_stack.emplace(next_run, next_index);
+        check_push(search_stack, next_run, next_index);
     }
     return true;
 }
