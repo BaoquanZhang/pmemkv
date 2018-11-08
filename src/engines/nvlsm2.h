@@ -171,6 +171,7 @@ class PRun {
         KeyEntry key_entry[RUN_SIZE];
         char vals[VAL_SIZE * RUN_SIZE];
         size_t size;
+        size_t valid;
         void get_range(KVRange& range);
         void display();
         int find_key(const string& key, string& val, int left, int right, int& mid);
@@ -217,6 +218,7 @@ class MetaTable {
         ~MetaTable();
         size_t getSize(); // get the size of ranges
         /* functions for segment ops in multiple layers */
+        PSegment* getMerge();
         void merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs);
         void add(vector<PSegment*> segs);
         void add(PSegment* seg);
@@ -247,7 +249,7 @@ class NVLsm2 : public KVEngine {
         persistent_ptr<Log> meta_log; // log for meta table
         // utility
         void display();
-        void copy_kv(persistent_ptr<PRun> des_run, int des_i, persistent_ptr<PRun> src_run, int src_i);
+        void compact(int comp, vector<persistent_ptr<PRun>>& runs);
         // public interface
         string Engine() final { return ENGINE; }               // engine identifier
         KVStatus Get(int32_t limit,                            // copy value to fixed-size buffer
