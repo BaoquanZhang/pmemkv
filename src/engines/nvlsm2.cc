@@ -337,6 +337,13 @@ void MetaTable::del(PSegment* seg) {
     count += segRanges.erase(kvRange);
     if (count != 1) {
         cout << "delete error: delete " << count << " of 1" << endl;
+        cout << "debug info: ";
+        cout << "seg to delete: ";
+        kvRange.display();
+        cout << endl;
+        cout << "current component: ";
+        display();
+        cout << endl;
         exit(-1);
     }
     delete seg;
@@ -409,20 +416,14 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
     RunIndex runIndex;
     long count = 0;
     char* last_key = NULL;
+    vector<persistent_ptr<PRun>> to_del;
     while (seg->next(runIndex)) {
-        //if (new_index > 0)
-        //    last_key = new_run->key_entry[new_index - 1].key;
         char* new_key = runIndex.pRun->key_entry[runIndex.index].key;
         //cout << "iterating: " << new_key << endl;
         if (last_key == NULL || strncmp(last_key, new_key, KEY_SIZE) < 0) {
             count++;
             copy_kv(new_run, new_index, runIndex.pRun, runIndex.index);
             last_key = new_run->key_entry[new_index].key;
-            runIndex.pRun->valid--;
-            if (runIndex.pRun->valid == 0) {
-                cout << "delete a new run" << endl;
-                //delete_persistent_atomic<PRun>(runIndex.pRun);
-            }
             new_index++;
             if (new_index == RUN_SIZE) {
                 new_run->size = new_index;
@@ -431,6 +432,13 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
                 make_persistent_atomic<PRun>(pmpool, new_run);
                 new_index = 0;
             }
+        }
+        //runIndex.pRun->display();
+        //cout << "valid from " << runIndex.pRun->valid;
+        runIndex.pRun->valid--;
+        //cout << " to " << runIndex.pRun->valid << endl;
+        if (runIndex.pRun->valid == 0) {
+            to_del.push_back(runIndex.pRun);
         }
     }
     if (new_index > 0) {
@@ -446,6 +454,10 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
     }
     cout << endl;
     del(seg);
+    cout << "delete " << to_del.size() << " runs" << endl; 
+    for (auto run : to_del) {
+        delete_persistent_atomic<PRun>(run);
+    }
     return;
 }
 /* display: display the ranges in the current component */
@@ -453,6 +465,9 @@ void MetaTable::display() {
     //cout << segRanges.size() << " ranges." << endl;
     for (auto segRange : segRanges) {
         segRange.first.display();
+        auto pRun = segRange.second->pRun;
+        cout << "(" << pRun->size << ",";
+        cout << pRun->valid << ")";
         cout << " ";
         KVRange kvRange;
         segRange.second->get_localRange(kvRange);
@@ -780,50 +795,40 @@ void PSegment::get_localRange(KVRange& kvRange) {
 void PSegment::seek_begin() {
     //cout << "seek to begin of a segment" << endl;
     //cout << "put " << pRun->key_entry[start].key << "into stack" << endl;
-    search_stack.emplace(pRun, start);
+    RunIndex runIndex(pRun, start, 1);
+    search_stack.emplace(runIndex, 1);
     return;
 }
 /* next: get the next key
  * description: get the top element from search stack
  *              and put right/next key into the stack
  * */
-void check_push(stack<RunIndex>& search_stack, persistent_ptr<PRun> pRun, int index) {
-    char* last_key = NULL;
-    if (search_stack.size() > 0) {
-        auto last_runIndex = search_stack.top();
-        last_key = last_runIndex.pRun->key_entry[last_runIndex.index].key;
-    }
-    char* cur_key = pRun->key_entry[index].key;
-    if (search_stack.size() == 0 || strncmp(last_key, cur_key, KEY_SIZE) >= 0) {
-        //cout << "push " << pRun->key_entry[index].key << endl;
-        search_stack.emplace(pRun, index);
+void check_push(map<RunIndex, int>& search_stack, RunIndex& runIndex) {
+    if (search_stack.find(runIndex) == search_stack.end()) {
+        search_stack[runIndex] = 1;
     }
     return;
 }
 bool PSegment::next(RunIndex& runIndex) {
     if (search_stack.size() == 0)
         return false;
-    runIndex = search_stack.top();
-    search_stack.pop();
+    runIndex = search_stack.begin()->first;
+    search_stack.erase(search_stack.begin());
     auto cur_run = runIndex.pRun;
     auto index = runIndex.index;
+    auto cur_dep = runIndex.depth;
     auto cur_key = cur_run->key_entry[index].key;
-    if (strncmp(get_key(end), cur_key, KEY_SIZE) == 0)
-        return false;
-    auto right_key = cur_run->key_entry[index + 1].key;
-    auto next_run = cur_run->key_entry[index].next_run;
-    auto next_index = cur_run->key_entry[index].next_key;
-    char* next_key = NULL;
-    if (next_run != NULL) {
-        next_key = next_run->key_entry[next_index].key;
-    }
-    check_push(search_stack, cur_run, index + 1);
-    int res = -1;
-    if (next_key != NULL) {
-        res = strncmp(right_key, next_key, KEY_SIZE);
-    }
-    if (res > 0) {
-        check_push(search_stack, next_run, next_index);
+    if (strncmp(get_key(end), cur_key, KEY_SIZE) >= 0) {
+        if (index < cur_run->size - 1) {
+            RunIndex runIndex(cur_run, index + 1, cur_dep);
+            check_push(search_stack, runIndex);
+        }
+        auto next_run = cur_run->key_entry[index].next_run;
+        auto next_index = cur_run->key_entry[index].next_key;
+        if (next_run != NULL) {
+            RunIndex runIndex(next_run, next_index, cur_dep + 1);
+            check_push(search_stack, runIndex);
+        }
     }
     return true;
 }

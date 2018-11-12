@@ -161,7 +161,6 @@ struct KeyEntry {
     size_t val_len;
     char* p_val;
     size_t next_key = -1; // offset of the bottom key, default -1
-    bool valid;
     persistent_ptr<PRun> next_run;
 };
 class PRun {
@@ -180,13 +179,41 @@ class PRun {
 struct RunIndex {
     persistent_ptr<PRun> pRun;
     int index;
-    RunIndex(persistent_ptr<PRun> cur_run, int cur_index) {
+    int depth;
+    RunIndex(persistent_ptr<PRun> cur_run, int cur_index, int dep) {
         pRun = cur_run;
         index = cur_index;
+        depth = dep;
     };
     RunIndex() {
         pRun = NULL;
         index = 0;
+    };
+    bool const operator==(const RunIndex runIndex) const {
+        if (pRun == runIndex.pRun 
+                && index == runIndex.index
+                && depth == runIndex.index) {
+            return true;
+        }
+        return false;
+    };
+    bool const operator<(const RunIndex& runIndex) const {
+        auto cur_key = pRun->key_entry[index].key;
+        auto key = runIndex.pRun->key_entry[runIndex.index].key;
+        int res = strncmp(cur_key, key, KEY_SIZE);
+        if (res != 0)
+            return res < 0;
+        else 
+            return depth < runIndex.depth;
+    };
+    bool const operator>(const RunIndex runIndex) const {
+        auto cur_key = pRun->key_entry[index].key;
+        auto key = runIndex.pRun->key_entry[runIndex.index].key;
+        int res = strncmp(cur_key, key, KEY_SIZE);
+        if (res != 0)
+            return res > 0;
+        else
+            return depth > runIndex.depth;
     };
 };
 /* persistent segment in a PRun */
@@ -196,7 +223,7 @@ class PSegment {
         size_t start;
         size_t end;
         size_t depth;
-        stack<RunIndex> search_stack;
+        map<RunIndex, int> search_stack;
         void seek(const string& key);
         void seek_begin();
         bool next(RunIndex& runIndex);
