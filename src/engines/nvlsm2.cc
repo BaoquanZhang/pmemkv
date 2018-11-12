@@ -153,10 +153,13 @@ KVStatus NVLsm2::Get(const string& key, string* value) {
     for (int i = 0; i < meta_table.size(); i++) {
         //cout << "total " << meta_table.size() << " component";
         //cout << ": searchng " << key << " in compoent " << i << endl;
+        meta_table[i].rdlock();
         if (meta_table[i].search(key, val)) {
             value->append(val);
+            meta_table[i].unlock();
             return OK;
         }
+        meta_table[i].unlock();
     }
     //cout << key << " not found" << endl;
     //exit(-1);
@@ -202,15 +205,18 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
         return;
     if (meta_table.size() == comp) 
         meta_table.emplace_back();
-    for (auto run : runs) 
+    cout << "start to build layers" << endl;
+    meta_table[comp].wrlock();
+    for (auto run : runs) {
         meta_table[comp].build_layer(run);
+    }
     cout << "finish build layers in component " << comp << endl;
-    auto mergeSeg = meta_table[comp].getMerge();
-    if (mergeSeg) {
-        vector<persistent_ptr<PRun>> mergeRes;
-        meta_table[comp].merge(mergeSeg, mergeRes);
+    display();
+    vector<persistent_ptr<PRun>> mergeRes;
+    meta_table[comp].merge(mergeRes);
+    meta_table[comp].unlock();
+    if (mergeRes.size() > 0) {
         compact(comp + 1, mergeRes);
-        meta_table[comp].del(mergeSeg);
     }
     cout << "finish merging in component " << comp << endl;
     return;
@@ -340,14 +346,22 @@ void MetaTable::del(PSegment* seg) {
  * */
 PSegment* MetaTable::getMerge() {
     cout << "getting seg to merge " << endl;
-    int cur = next_compact;
+    int len = segRanges.size();
     auto it = segRanges.begin();
-    advance(it, cur);
+    int cur = 0;
+    if (next_compact < len) {
+        advance(it, cur);
+        cur = next_compact;
+    }
+    next_compact = cur;
     bool end_flag = false;
     while (it->second->depth < MAX_DEPTH) {
-        if (cur == next_compact && end_flag)
+        cout << "check seg " << cur << endl;
+        if (cur == next_compact && end_flag) {
+            cout << "no seg to merge" << endl;
             return NULL;
-        cout << "checking seg index " << cur << endl;
+        }
+        //cout << "checking seg index " << cur << endl;
         it++;
         cur++;
         if (it == segRanges.end()) {
@@ -356,6 +370,7 @@ PSegment* MetaTable::getMerge() {
             end_flag = true;
         }
     }
+    next_compact = cur + 1;
     cout << "merging seg is ";
     it->second->display();
     cout << endl;
@@ -379,7 +394,11 @@ void MetaTable::copy_kv(persistent_ptr<PRun> des_run, int des_i,
  *         runs -- merge results
  * */
 /* copy data between PRuns */
-void MetaTable::merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
+void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
+    auto seg = getMerge();
+    if (seg == NULL) {
+        return;
+    }
     cout << "start to merge seg ";
     seg->display();
     cout << endl;
@@ -388,15 +407,22 @@ void MetaTable::merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
     make_persistent_atomic<PRun>(pmpool, new_run);
     int new_index = 0;
     RunIndex runIndex;
+    long count = 0;
+    char* last_key = NULL;
     while (seg->next(runIndex)) {
-        char* last_key = NULL;
-        if (new_index > 0)
-            last_key = new_run->key_entry[new_index - 1].key;
+        //if (new_index > 0)
+        //    last_key = new_run->key_entry[new_index - 1].key;
         char* new_key = runIndex.pRun->key_entry[runIndex.index].key;
         //cout << "iterating: " << new_key << endl;
         if (last_key == NULL || strncmp(last_key, new_key, KEY_SIZE) < 0) {
+            count++;
             copy_kv(new_run, new_index, runIndex.pRun, runIndex.index);
+            last_key = new_run->key_entry[new_index].key;
             runIndex.pRun->valid--;
+            if (runIndex.pRun->valid == 0) {
+                cout << "delete a new run" << endl;
+                //delete_persistent_atomic<PRun>(runIndex.pRun);
+            }
             new_index++;
             if (new_index == RUN_SIZE) {
                 new_run->size = new_index;
@@ -409,11 +435,17 @@ void MetaTable::merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
     }
     if (new_index > 0) {
         new_run->size = new_index;
+        new_run->valid = new_index;
         runs.push_back(new_run);
     } else {
         delete_persistent_atomic<PRun>(new_run);
     }
-    cout << "merge results: " << runs.size() << endl;
+    cout << "merge results: " << runs.size() << "runs and " << count << "kvs" << endl;
+    for (auto run : runs) {
+        run->display();
+    }
+    cout << endl;
+    del(seg);
     return;
 }
 /* display: display the ranges in the current component */
@@ -438,24 +470,33 @@ void MetaTable::display() {
     cout << endl;
     return;
 }
-
+/* lock/unlock: lock operations of metaTable */
+void MetaTable::rdlock() {
+    pthread_rwlock_rdlock(&rwlock);
+    return;
+}
+void MetaTable::wrlock() {
+    pthread_rwlock_wrlock(&rwlock);
+    return;
+}
+void MetaTable::unlock() {
+    pthread_rwlock_unlock(&rwlock);
+    return;
+}
 /* search: search a key / overlapped ranges in a component */
 bool MetaTable::search(const string& key, string& value) {
     KVRange kvRange;
     kvRange.start_key = key;
     kvRange.end_key = key;
     vector<PSegment*> segs;
-    pthread_rwlock_rdlock(&rwlock);
     search(kvRange, segs);
     //if (segs.size() == 0)
     //    cout << "No range found for key: " << key << endl; 
     for (auto seg : segs) {
         if (seg->search(key, value)) {
-            pthread_rwlock_unlock(&rwlock);
             return true;
         }
     }
-    pthread_rwlock_unlock(&rwlock);
     return false;
 }
 void MetaTable::search(KVRange& kvRange, vector<PSegment*>& segs) {
@@ -494,8 +535,8 @@ PSegment* create_pseg(persistent_ptr<PRun> run, int start, int end, int depth) {
     return new_seg;
 }
 void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun> run) {
-    //cout << "start to build a new layer" << endl;
-    if (overlapped_segs.size() == 0)
+    cout << "start to build a new layer" << endl;
+    if (overlapped_segs.size() == 0 || run == NULL)
         return;
     vector<PSegment*> new_segs;
     PSegment* new_seg = NULL;
@@ -584,35 +625,35 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
         btm_right = last_seg->end;
     }
     /* built a new layer */
-    //cout << "up run: ";
-    //run->display();
-    //cout << "overlapped segs: ";
-    //for (auto overlap_seg : overlapped_segs) {
-    //    overlap_seg->display();
-    //}
-    //cout << "new layers: ";
-    //for (auto new_seg : new_segs) {
-    //    new_seg->display();
-    //}
-    //cout << endl;
+    cout << "up run: ";
+    run->display();
+    cout << "overlapped segs: ";
+    for (auto overlap_seg : overlapped_segs) {
+        overlap_seg->display();
+    }
+    cout << "new layers: ";
+    for (auto new_seg : new_segs) {
+        new_seg->display();
+    }
+    cout << endl;
     del(overlapped_segs);
     add(new_segs);
-    //cout << "finish building a new layer" << endl;
+    cout << "finish building a new layer" << endl;
     return;
 }
 void MetaTable::build_layer(persistent_ptr<PRun> run) {
-    pthread_rwlock_wrlock(&rwlock);
     vector<PSegment*> overlapped_segs;
     KVRange kvRange;
     PSegment* seg = new PSegment(run, 0, run->size - 1);
     seg->get_localRange(kvRange);
     search(kvRange, overlapped_segs);
     if (overlapped_segs.size() == 0) {
+        seg->depth = 1;
         add(seg);
     } else {
+        cout << "have overlaps do build" << endl;
         do_build(overlapped_segs, run);
     }
-    pthread_rwlock_unlock(&rwlock);
     return;
 }
 /* ###################### PRun ######################### */
@@ -766,7 +807,8 @@ bool PSegment::next(RunIndex& runIndex) {
     search_stack.pop();
     auto cur_run = runIndex.pRun;
     auto index = runIndex.index;
-    if (index == end)
+    auto cur_key = cur_run->key_entry[index].key;
+    if (strncmp(get_key(end), cur_key, KEY_SIZE) == 0)
         return false;
     auto right_key = cur_run->key_entry[index + 1].key;
     auto next_run = cur_run->key_entry[index].next_run;

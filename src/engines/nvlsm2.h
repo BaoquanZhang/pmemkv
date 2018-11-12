@@ -217,16 +217,19 @@ class MetaTable {
         MetaTable();
         ~MetaTable();
         size_t getSize(); // get the size of ranges
+        void rdlock();
+        void wrlock();
+        void unlock();
         /* functions for segment ops in multiple layers */
         PSegment* getMerge();
-        void merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs);
+        void merge(vector<persistent_ptr<PRun>>& runs); // lock
         void add(vector<PSegment*> segs);
         void add(PSegment* seg);
         void del(vector<PSegment*> segs);
-        void del(PSegment* seg);
-        bool search(const string& key, string& val);
+        void del(PSegment* seg); 
+        bool search(const string& key, string& val); // lock
         void search(KVRange& kvRange, vector<PSegment*>& segs);
-        void build_layer(persistent_ptr<PRun> run);
+        void build_layer(persistent_ptr<PRun> run); // lock
         void do_build(vector<PSegment*>& overlap_segs, persistent_ptr<PRun> run);
         void display();
         void copy_kv(persistent_ptr<PRun> des_run, int des_i, 
