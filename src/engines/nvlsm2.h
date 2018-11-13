@@ -41,6 +41,9 @@
 #include <ctime>
 #include <cmath>
 #include <string>
+#include <set>
+#include <unordered_map>
+#include <unordered_set>
 /* thread pool headers */
 #include "nvlsm/threadpool.h"
 /* pmdk headers */
@@ -160,6 +163,7 @@ struct KeyEntry {
     char key[KEY_SIZE];
     size_t val_len;
     char* p_val;
+    bool valid = true;
     size_t next_key = -1; // offset of the bottom key, default -1
     persistent_ptr<PRun> next_run;
 };
@@ -170,7 +174,7 @@ class PRun {
         KeyEntry key_entry[RUN_SIZE];
         char vals[VAL_SIZE * RUN_SIZE];
         size_t size;
-        size_t valid;
+        int valid;
         void get_range(KVRange& range);
         void display();
         int find_key(const string& key, string& val, int left, int right, int& mid);
@@ -188,14 +192,12 @@ struct RunIndex {
     RunIndex() {
         pRun = NULL;
         index = 0;
+        depth = 0;
     };
-    bool const operator==(const RunIndex runIndex) const {
-        if (pRun == runIndex.pRun 
-                && index == runIndex.index
-                && depth == runIndex.index) {
-            return true;
-        }
-        return false;
+    bool const operator==(const RunIndex& runIndex) const {
+        return pRun == runIndex.pRun 
+                && index == runIndex.index;
+
     };
     bool const operator<(const RunIndex& runIndex) const {
         auto cur_key = pRun->key_entry[index].key;
@@ -223,9 +225,12 @@ class PSegment {
         size_t start;
         size_t end;
         size_t depth;
+        int max_stack;
         map<RunIndex, int> search_stack;
+        set<persistent_ptr<PRun>> run_set;
         void seek(const string& key);
         void seek_begin();
+        void check_push(map<RunIndex, int>& search_stack, RunIndex runIndex);
         bool next(RunIndex& runIndex);
         bool search(const string& key, string& value);
         char* get_key(int index);
