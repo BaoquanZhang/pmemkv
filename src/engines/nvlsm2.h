@@ -197,7 +197,6 @@ struct RunIndex {
     bool const operator==(const RunIndex& runIndex) const {
         return pRun == runIndex.pRun 
                 && index == runIndex.index;
-
     };
     bool const operator<(const RunIndex& runIndex) const {
         auto cur_key = pRun->key_entry[index].key;
