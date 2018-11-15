@@ -165,7 +165,7 @@ struct KeyEntry {
     char* p_val;
     bool valid = true;
     size_t next_key = -1; // offset of the bottom key, default -1
-    persistent_ptr<PRun> next_run;
+    persistent_ptr<PRun> next_run = NULL;
 };
 class PRun {
     public:
@@ -175,6 +175,7 @@ class PRun {
         char vals[VAL_SIZE * RUN_SIZE];
         size_t size;
         int valid;
+        int referred;
         void get_range(KVRange& range);
         void display();
         int find_key(const string& key, string& val, int left, int right, int& mid);
@@ -223,7 +224,7 @@ class PSegment {
         persistent_ptr<PRun> pRun;
         size_t start;
         size_t end;
-        size_t depth;
+        int depth;
         int max_stack;
         map<RunIndex, int> search_stack;
         set<persistent_ptr<PRun>> run_set;
@@ -253,14 +254,15 @@ class MetaTable {
         void unlock();
         /* functions for segment ops in multiple layers */
         PSegment* getMerge();
-        void merge(vector<persistent_ptr<PRun>>& runs); // lock
+        void merge(vector<persistent_ptr<PRun>>& runs);
         void add(vector<PSegment*> segs);
         void add(PSegment* seg);
         void del(vector<PSegment*> segs);
         void del(PSegment* seg); 
-        bool search(const string& key, string& val); // lock
+        bool search(const string& key, string& val);
+        void search(const string& key, vector<PSegment*>& segs);
         void search(KVRange& kvRange, vector<PSegment*>& segs);
-        void build_layer(persistent_ptr<PRun> run); // lock
+        void build_layer(persistent_ptr<PRun> run);
         void do_build(vector<PSegment*>& overlap_segs, persistent_ptr<PRun> run);
         void display();
         void copy_kv(persistent_ptr<PRun> des_run, int des_i, 

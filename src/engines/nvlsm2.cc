@@ -440,9 +440,11 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
         //runIndex.pRun->display();
         //cout << "valid from " << runIndex.pRun->valid;
         cur_run->key_entry[cur_index].valid = false;
+        if (cur_run->key_entry[cur_index].next_run)
+            cur_run->key_entry[cur_index].next_run->referred--;
         cur_run->valid--;
         //cout << " to " << runIndex.pRun->valid << endl;
-        if (cur_run->valid == 0) {
+        if (cur_run->valid == 0 && cur_run->referred == 0) {
             to_del.push_back(cur_run);
         }
     }
@@ -462,6 +464,7 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
     del(seg);
     cout << "delete " << to_del.size() << " runs" << endl; 
     for (auto run : to_del) {
+        run->display();
         delete_persistent_atomic<PRun>(run);
     }
     return;
@@ -473,7 +476,8 @@ void MetaTable::display() {
         segRange.first.display();
         auto pRun = segRange.second->pRun;
         cout << "(" << pRun->size << ",";
-        cout << pRun->valid << ")";
+        cout << pRun->valid << ",";
+        cout << pRun->referred << ")";
         cout << " ";
         KVRange kvRange;
         segRange.second->get_localRange(kvRange);
@@ -510,7 +514,7 @@ bool MetaTable::search(const string& key, string& value) {
     kvRange.start_key = key;
     kvRange.end_key = key;
     vector<PSegment*> segs;
-    search(kvRange, segs);
+    search(key, segs);
     //if (segs.size() == 0)
     //    cout << "No range found for key: " << key << endl; 
     for (auto seg : segs) {
@@ -519,6 +523,30 @@ bool MetaTable::search(const string& key, string& value) {
         }
     }
     return false;
+}
+void MetaTable::search(const string& key, vector<PSegment*>& segs) {
+    if (segRanges.empty() || segRanges.size() == 0)
+        return;
+    // binary search for component i > 1
+    KVRange kvRange(key, key);
+    //cout << "kvrange:" << kvRange.start_key << "," << kvRange.end_key << endl;
+    //cout << "current commopont: ";
+    //display();
+    auto it_high = segRanges.upper_bound(kvRange);
+    if (it_high == segRanges.begin()) {
+        segs.push_back(it_high->second);
+        return;
+    }
+    it_high--;
+    if (kvRange.start_key <= it_high->first.end_key) {
+        segs.push_back(it_high->second);
+        return;
+    }
+    it_high++;
+    if (it_high != segRanges.end()) {
+        segs.push_back(it_high->second);
+    }
+    return;
 }
 void MetaTable::search(KVRange& kvRange, vector<PSegment*>& segs) {
     if (segRanges.empty() || segRanges.size() == 0)
@@ -555,6 +583,12 @@ PSegment* create_pseg(persistent_ptr<PRun> run, int start, int end, int depth) {
     new_seg->depth = depth;
     return new_seg;
 }
+void build_link(persistent_ptr<PRun> src, int src_i, persistent_ptr<PRun> des, int des_i) {
+    src->key_entry[src_i].next_run = des;
+    src->key_entry[src_i].next_key = des_i;
+    des->referred++;
+    return;
+} 
 void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun> run) {
     cout << "start to build a new layer" << endl;
     if (overlapped_segs.size() == 0 || run == NULL)
@@ -600,10 +634,8 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
             auto btm_key = overlap_seg->pRun->key_entry[btm_right].key;
             auto up_key = run->key_entry[up_right].key;
             if (strncmp(up_key, btm_key, KEY_SIZE) <= 0) {
-                run->key_entry[up_right].next_key = btm_right;
-                run->key_entry[up_right].next_run = overlap_seg->pRun;
-                int cur_depth = overlap_seg->depth + 1;
-                max_depth = max_depth > cur_depth ? max_depth : cur_depth;
+                build_link(run, up_right, overlap_seg->pRun, btm_right);
+                max_depth = max(max_depth, overlap_seg->depth + 1);
                 up_right++;
             } else {
                 btm_right++;
@@ -619,10 +651,8 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
             if (strncmp(cur_up, btm_end, KEY_SIZE) > 0)
                 break;
             /* if the subsequent key are in the range */
-            run->key_entry[up_right].next_key = last_seg->end;
-            run->key_entry[up_right].next_run = last_seg->pRun;
-            int cur_depth = last_seg->depth + 1;
-            max_depth = max_depth > cur_depth ? max_depth : cur_depth;
+            build_link(run, up_right, last_seg->pRun, last_seg->end);
+            max_depth = max(max_depth,last_seg->depth + 1);
             up_right++;
         } 
     } else {
@@ -678,7 +708,7 @@ void MetaTable::build_layer(persistent_ptr<PRun> run) {
     return;
 }
 /* ###################### PRun ######################### */
-PRun::PRun(): size(0) {
+PRun::PRun(): size(0), valid(0), referred(0) {
 }
 PRun::~PRun() {
 }
@@ -817,14 +847,21 @@ void PSegment::check_push(map<RunIndex, int>& search_stack, RunIndex runIndex) {
     auto cur_index = runIndex.index;
     if (cur_run->key_entry[cur_index].valid == false)
         return;
+    if (search_stack.count(runIndex) > 0) {
+        //cout << "find same key in the stack" << endl;
+        return;
+    }
     auto cur_key = cur_run->key_entry[cur_index].key;
     if (strncmp(get_key(end), cur_key, KEY_SIZE) >= 0) {
         search_stack[runIndex] = 1;
     }
     /* if it is a new run, we need to check the previous keys */
+    /*
     if (run_set.count(cur_run) == 0) {
-        cout << "merging a new run" << endl;
+        //cout << "merging a new run" << endl;
         run_set.emplace(cur_run);
+        cur_run->display();
+        cout << endl;
         char* start_key = pRun->key_entry[start].key;
         cur_index--;
         while (cur_index >= 0) { 
@@ -837,7 +874,7 @@ void PSegment::check_push(map<RunIndex, int>& search_stack, RunIndex runIndex) {
             search_stack[runIndex] = 1;
             cur_index--;
         }
-    }
+    }*/
     return;
 }
 bool PSegment::next(RunIndex& runIndex) {
@@ -855,7 +892,7 @@ bool PSegment::next(RunIndex& runIndex) {
     }
     auto next_run = cur_run->key_entry[cur_index].next_run;
     auto next_index = cur_run->key_entry[cur_index].next_key;
-    if (next_run != NULL) {
+    if (next_run != NULL && cur_dep < depth) {
         RunIndex nextIndex(next_run, next_index, cur_dep + 1);
         check_push(search_stack, nextIndex);
     }
