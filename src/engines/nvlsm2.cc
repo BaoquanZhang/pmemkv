@@ -76,8 +76,8 @@ static void persist(void * v_nvlsm) {
     vector<persistent_ptr<PRun>> runs;
     runs.push_back(p_run);
     nvlsm->compact(0, runs);
-    cout << "after building new layers: " << endl;
-    nvlsm->display();
+    //cout << "after building new layers: " << endl;
+    //nvlsm->display();
     //cout << "persist stop" << endl;
 }
 /* ######################## Log #########################################*/
@@ -200,25 +200,25 @@ void NVLsm2::display() {
  * return: the segs need to be merged 
  * */
 void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
-    cout << "start to compact" << endl;
+    //cout << "start to compact" << endl;
     if (runs.size() == 0)
         return;
     if (meta_table.size() == comp) 
         meta_table.emplace_back();
-    cout << "start to build layers" << endl;
+    //cout << "start to build layers" << endl;
     meta_table[comp].wrlock();
     for (auto run : runs) {
         meta_table[comp].build_layer(run);
     }
-    cout << "finish build layers in component " << comp << endl;
-    display();
+    //cout << "finish build layers in component " << comp << endl;
+    //display();
     vector<persistent_ptr<PRun>> mergeRes;
     meta_table[comp].merge(mergeRes);
     meta_table[comp].unlock();
     if (mergeRes.size() > 0) {
         compact(comp + 1, mergeRes);
     }
-    cout << "finish merging in component " << comp << endl;
+    //cout << "finish merging in component " << comp << endl;
     return;
 }
 
@@ -352,7 +352,7 @@ void MetaTable::del(PSegment* seg) {
 /* getMerge: get the segment needs to be merged based on the current depths
  * */
 PSegment* MetaTable::getMerge() {
-    cout << "getting seg to merge " << endl;
+    //cout << "getting seg to merge " << endl;
     int len = segRanges.size();
     auto it = segRanges.begin();
     int cur = 0;
@@ -365,7 +365,7 @@ PSegment* MetaTable::getMerge() {
     while (it->second->depth < MAX_DEPTH) {
         //cout << "check seg " << cur << endl;
         if (cur == next_compact && end_flag) {
-            cout << "no seg to merge" << endl;
+            //cout << "no seg to merge" << endl;
             return NULL;
         }
         //cout << "checking seg index " << cur << endl;
@@ -378,9 +378,9 @@ PSegment* MetaTable::getMerge() {
         }
     }
     next_compact = cur + 1;
-    cout << "merging seg is ";
-    it->second->display();
-    cout << endl;
+    //cout << "merging seg is ";
+    //it->second->display();
+    //cout << endl;
     return it->second;
 }
 /* copy_key: copy kv from src run to des run */
@@ -406,9 +406,9 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
     if (seg == NULL) {
         return;
     }
-    cout << "start to merge seg ";
-    seg->display();
-    cout << endl;
+    //cout << "start to merge seg ";
+    //seg->display();
+    //cout << endl;
     persistent_ptr<PRun> new_run;
     make_persistent_atomic<PRun>(pmpool, new_run);
     int new_index = 0;
@@ -440,11 +440,11 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
         //runIndex.pRun->display();
         //cout << "valid from " << runIndex.pRun->valid;
         cur_run->key_entry[cur_index].valid = false;
+        cur_run->valid--;
         if (cur_run->key_entry[cur_index].next_run)
             cur_run->key_entry[cur_index].next_run->referred--;
-        cur_run->valid--;
         //cout << " to " << runIndex.pRun->valid << endl;
-        if (cur_run->valid == 0 && cur_run->referred == 0) {
+        if (cur_run->valid <= 0 && cur_run->referred <= 0) {
             to_del.push_back(cur_run);
         }
     }
@@ -455,16 +455,16 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
     } else {
         delete_persistent_atomic<PRun>(new_run);
     }
-    cout << "merge results: " << runs.size() << "runs and " << count << "kvs" << endl;
-    for (auto run : runs) {
-        run->display();
-    }
-    cout << endl;
-    cout << "max stack: " << seg->max_stack << endl;
+    //cout << "merge results: " << runs.size() << "runs and " << count << "kvs" << endl;
+    //for (auto run : runs) {
+    //    run->display();
+    //}
+    //cout << endl;
+    //cout << "max stack: " << seg->max_stack << endl;
     del(seg);
-    cout << "delete " << to_del.size() << " runs" << endl; 
+    //cout << "delete " << to_del.size() << " runs" << endl; 
     for (auto run : to_del) {
-        run->display();
+        //run->display();
         delete_persistent_atomic<PRun>(run);
     }
     return;
@@ -590,7 +590,7 @@ void build_link(persistent_ptr<PRun> src, int src_i, persistent_ptr<PRun> des, i
     return;
 } 
 void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun> run) {
-    cout << "start to build a new layer" << endl;
+    //cout << "start to build a new layer" << endl;
     if (overlapped_segs.size() == 0 || run == NULL)
         return;
     vector<PSegment*> new_segs;
@@ -676,20 +676,20 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
         btm_right = last_seg->end;
     }
     /* built a new layer */
-    cout << "up run: ";
-    run->display();
-    cout << "overlapped segs: ";
-    for (auto overlap_seg : overlapped_segs) {
-        overlap_seg->display();
-    }
-    cout << "new layers: ";
-    for (auto new_seg : new_segs) {
-        new_seg->display();
-    }
-    cout << endl;
+    //cout << "up run: ";
+    //run->display();
+    //cout << "overlapped segs: ";
+    //for (auto overlap_seg : overlapped_segs) {
+    //    overlap_seg->display();
+    //}
+    //cout << "new layers: ";
+    //for (auto new_seg : new_segs) {
+    //    new_seg->display();
+    //}
+    //cout << endl;
     del(overlapped_segs);
     add(new_segs);
-    cout << "finish building a new layer" << endl;
+    //cout << "finish building a new layer" << endl;
     return;
 }
 void MetaTable::build_layer(persistent_ptr<PRun> run) {
@@ -702,7 +702,7 @@ void MetaTable::build_layer(persistent_ptr<PRun> run) {
         seg->depth = 1;
         add(seg);
     } else {
-        cout << "have overlaps do build" << endl;
+        //cout << "have overlaps do build" << endl;
         do_build(overlapped_segs, run);
     }
     return;
