@@ -44,6 +44,7 @@
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
+#include <list>
 /* thread pool headers */
 #include "nvlsm/threadpool.h"
 /* pmdk headers */
@@ -81,12 +82,12 @@ class PRun;
 class PSegment;
 class MemTable;
 class NVLsm2;
+struct KVRange;
 
 /* PMEM structures */
 struct LSM_Root {                 // persistent root object
     persistent_ptr<Run> head;   // head of the vector of levels
 };
-
 /* KVRange : range for runs */
 struct KVRange {
     string start_key;
@@ -221,13 +222,20 @@ struct RunIndex {
 /* persistent segment in a PRun */
 class PSegment {
     public:
-        persistent_ptr<PRun> pRun;
+        /* variable */
+        list<persistent_ptr<PRun>> pRuns; // included runs, the front() is the top
+        set<persistent_ptr<PRun>> runSet; // all of the runs in a segment
         size_t start;
         size_t end;
         int depth;
         int max_stack;
         map<RunIndex, int> search_stack;
         set<persistent_ptr<PRun>> run_set;
+        /* utilities */
+        bool isInclude(persistent_ptr<PRun> run);
+        void addRuns(list<persistent_ptr<PRun>> runs);
+        void addRun(persistent_ptr<PRun> run);
+        persistent_ptr<PRun> get_run(); // return the top run
         void seek(const string& key);
         void seek_begin();
         void check_push(map<RunIndex, int>& search_stack, RunIndex runIndex);
@@ -236,7 +244,8 @@ class PSegment {
         char* get_key(int index);
         void get_localRange(KVRange& kvRange);
         void display();
-        PSegment(persistent_ptr<PRun> p_run, size_t start_i, size_t end_i);
+        PSegment(PSegment* old_seg, persistent_ptr<PRun> p_run, size_t start_i, size_t end_i);
+        PSegment(vector<PSegment*> old_segs, persistent_ptr<PRun> p_run, size_t start_i, size_t end_i);
         ~PSegment();
 };
 
@@ -264,9 +273,14 @@ class MetaTable {
         void search(KVRange& kvRange, vector<PSegment*>& segs);
         void build_layer(persistent_ptr<PRun> run);
         void do_build(vector<PSegment*>& overlap_segs, persistent_ptr<PRun> run);
+        void build_link(persistent_ptr<PRun> src, int src_i, persistent_ptr<PRun> des, int des_i);
         void display();
         void copy_kv(persistent_ptr<PRun> des_run, int des_i, 
                         persistent_ptr<PRun> src_run, int src_i);
+        PSegment* create_pseg(vector<PSegment*> old_segs, persistent_ptr<PRun> run, 
+                int start, int end, int depth);
+        PSegment* create_pseg(PSegment* old_seg, persistent_ptr<PRun> run, 
+                int start, int end, int depth);
 };
 
 class NVLsm2 : public KVEngine {

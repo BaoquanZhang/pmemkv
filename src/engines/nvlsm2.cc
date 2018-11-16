@@ -41,6 +41,7 @@ namespace nvlsm2 {
 
 pool<LSM_Root> pmpool;
 size_t pmsize;
+unordered_map<string, int> ref_tbl;
 /* #####################static functions for multiple threads ####################### */
 /* persist: persist a mem_table to c0
  * v_nvlsm: an instance of nvlsm
@@ -76,8 +77,8 @@ static void persist(void * v_nvlsm) {
     vector<persistent_ptr<PRun>> runs;
     runs.push_back(p_run);
     nvlsm->compact(0, runs);
-    //cout << "after building new layers: " << endl;
-    //nvlsm->display();
+    cout << "after building new layers: " << endl;
+    nvlsm->display();
     //cout << "persist stop" << endl;
 }
 /* ######################## Log #########################################*/
@@ -194,6 +195,11 @@ void NVLsm2::display() {
         cout << "Component " << i << ": " << endl;
         meta_table[i].display();
     }
+    cout << "ref table: ";
+    for (auto ref : ref_tbl) {
+        cout << "(" << ref.first << "," << ref.second << ")";
+    }
+    cout << endl;
     cout << "=========== end displaying meta table ========" << endl;
 }
 /* compact: compact runs to a component 
@@ -474,7 +480,7 @@ void MetaTable::display() {
     //cout << segRanges.size() << " ranges." << endl;
     for (auto segRange : segRanges) {
         segRange.first.display();
-        auto pRun = segRange.second->pRun;
+        auto pRun = segRange.second->get_run();
         cout << "(" << pRun->size << ",";
         cout << pRun->valid << ",";
         cout << pRun->referred << ")";
@@ -491,6 +497,10 @@ void MetaTable::display() {
             cout << endl;
             exit(-1);
         }
+        cout << "(";
+        for (auto run : segRange.second->pRuns)
+            run->display();
+        cout << ")" << endl;
     }
     cout << endl;
     return;
@@ -578,21 +588,16 @@ void MetaTable::search(KVRange& kvRange, vector<PSegment*>& segs) {
 }
 
 /* build_layer: build a new layer using a seg */
-PSegment* create_pseg(persistent_ptr<PRun> run, int start, int end, int depth) {
-    auto new_seg = new PSegment(run, start, end);
-    new_seg->depth = depth;
-    return new_seg;
-}
-void build_link(persistent_ptr<PRun> src, int src_i, persistent_ptr<PRun> des, int des_i) {
+void MetaTable::build_link(persistent_ptr<PRun> src, int src_i, persistent_ptr<PRun> des, int des_i) {
     src->key_entry[src_i].next_run = des;
     src->key_entry[src_i].next_key = des_i;
     des->referred++;
     return;
 } 
 void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun> run) {
-    //cout << "start to build a new layer" << endl;
     if (overlapped_segs.size() == 0 || run == NULL)
         return;
+    cout << "start to build a new layer" << endl;
     vector<PSegment*> new_segs;
     PSegment* new_seg = NULL;
     int up_right = 0;
@@ -613,7 +618,7 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
     }
     /* check if the skipped keys are enough to build a new seg */
     if (btm_right > btm_left) {
-        new_seg = create_pseg(begin_seg->pRun, btm_left, btm_right - 1, begin_seg->depth);
+        new_seg = new PSegment(begin_seg, NULL, btm_left, btm_right - 1);
         new_segs.push_back(new_seg);
         btm_left = btm_right;
     }
@@ -631,11 +636,10 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
             btm_right = btm_left;
         }
         while (up_right < run->size && btm_right <= overlap_seg->end) {
-            auto btm_key = overlap_seg->pRun->key_entry[btm_right].key;
+            auto btm_key = overlap_seg->get_run()->key_entry[btm_right].key;
             auto up_key = run->key_entry[up_right].key;
             if (strncmp(up_key, btm_key, KEY_SIZE) <= 0) {
-                build_link(run, up_right, overlap_seg->pRun, btm_right);
-                max_depth = max(max_depth, overlap_seg->depth + 1);
+                build_link(run, up_right, overlap_seg->get_run(), btm_right);
                 up_right++;
             } else {
                 btm_right++;
@@ -651,8 +655,7 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
             if (strncmp(cur_up, btm_end, KEY_SIZE) > 0)
                 break;
             /* if the subsequent key are in the range */
-            build_link(run, up_right, last_seg->pRun, last_seg->end);
-            max_depth = max(max_depth,last_seg->depth + 1);
+            build_link(run, up_right, last_seg->get_run(), last_seg->end);
             up_right++;
         } 
     } else {
@@ -660,50 +663,50 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
         if (btm_right <= last_seg->end) {
             auto up_end = run->key_entry[run->size - 1].key; 
             while (btm_right >= 0) {
-                auto btm_key = last_seg->pRun->key_entry[btm_right].key;
+                auto btm_key = last_seg->get_run()->key_entry[btm_right].key;
                 if (strncmp(btm_key, up_end, KEY_SIZE) <= 0)
                     break;
                 btm_right--;
             }
         }
     }
-    new_seg = create_pseg(run, up_left, run->size - 1, max_depth);
+    new_seg = new PSegment(overlapped_segs, run, up_left, run->size - 1);
     new_segs.push_back(new_seg);
     /* step 3 add the non-overlapped keys at the end */
     if (btm_right < last_seg->end) {
-        new_seg = create_pseg(last_seg->pRun, btm_right + 1, last_seg->end, last_seg->depth);
+        new_seg = new PSegment(last_seg, NULL, btm_right + 1, last_seg->end);
         new_segs.push_back(new_seg);
         btm_right = last_seg->end;
     }
     /* built a new layer */
-    //cout << "up run: ";
-    //run->display();
-    //cout << "overlapped segs: ";
-    //for (auto overlap_seg : overlapped_segs) {
-    //    overlap_seg->display();
-    //}
-    //cout << "new layers: ";
-    //for (auto new_seg : new_segs) {
-    //    new_seg->display();
-    //}
-    //cout << endl;
+    cout << "up run: ";
+    run->display();
+    cout << "overlapped segs: ";
+    for (auto overlap_seg : overlapped_segs) {
+        overlap_seg->display();
+    }
+    cout << "new layers: ";
+    for (auto new_seg : new_segs) {
+        new_seg->display();
+    }
+    cout << endl;
     del(overlapped_segs);
     add(new_segs);
-    //cout << "finish building a new layer" << endl;
+    cout << "finish building a new layer" << endl;
     return;
 }
 void MetaTable::build_layer(persistent_ptr<PRun> run) {
     vector<PSegment*> overlapped_segs;
     KVRange kvRange;
-    PSegment* seg = new PSegment(run, 0, run->size - 1);
+    PSegment* seg = new PSegment(NULL, run, 0, run->size - 1);
     seg->get_localRange(kvRange);
     search(kvRange, overlapped_segs);
     if (overlapped_segs.size() == 0) {
-        seg->depth = 1;
         add(seg);
     } else {
         //cout << "have overlaps do build" << endl;
         do_build(overlapped_segs, run);
+        delete(seg);
     }
     return;
 }
@@ -757,10 +760,62 @@ int PRun::find_key(const string& key, string& value, int left, int right, int& m
 }
 
 /* ##################### PSegment ############################################# */
-PSegment::PSegment(persistent_ptr<PRun> p_run, size_t start_i, size_t end_i)
-    : pRun(p_run), start(start_i), end(end_i), depth(0), max_stack(0) {
+PSegment::PSegment(PSegment* old_seg, persistent_ptr<PRun> run, size_t start_i, size_t end_i)
+    : start(start_i), end(end_i), depth(0), max_stack(0) {
+        if (run)
+            addRun(run);
+        if (old_seg)
+            addRuns(old_seg->pRuns);
+}
+PSegment::PSegment(vector<PSegment*> old_segs, persistent_ptr<PRun> run, size_t start_i, size_t end_i)
+    : start(start_i), end(end_i), depth(0), max_stack(0) {
+        if (run)
+            addRun(run);
+        for (auto old_seg : old_segs)
+            addRuns(old_seg->pRuns);
 }
 PSegment::~PSegment() {
+    for (auto run : runSet) {
+        KVRange range;
+        run->get_range(range);
+        string kv = range.start_key + range.end_key;
+        ref_tbl[kv]--;
+        if (ref_tbl[kv] == 0)
+            delete_persistent_atomic<PRun>(run);
+    }
+}
+/* isInclude: judge if a run should be included in the seg */
+bool PSegment::isInclude(persistent_ptr<PRun> run) {
+    if (pRuns.size() == 0)
+        return true;
+    KVRange segRange;
+    get_localRange(segRange);
+    KVRange runRange;
+    run->get_range(runRange);
+    if (segRange.end_key < runRange.start_key 
+            || segRange.start_key > runRange.end_key)
+        return false;
+    return true;
+}
+/* addRuns/addRun: add run to a seg */
+void PSegment::addRuns(list<persistent_ptr<PRun>> runs) {
+    for (auto run : runs)
+        addRun(run);
+    return;
+}
+void PSegment::addRun(persistent_ptr<PRun> run) {
+    if (runSet.count(run) == 0 && isInclude(run)) {
+        runSet.emplace(run);
+        pRuns.push_back(run);
+        KVRange range;
+        run->get_range(range);
+        string kv = range.start_key + range.end_key;
+        if (ref_tbl.count(kv) == 0)
+            ref_tbl[kv] = 1;
+        else
+            ref_tbl[kv]++;
+    }
+    return;
 }
 /* search: search a key in a seg 
  * para: key - key to search
@@ -768,7 +823,7 @@ PSegment::~PSegment() {
  * return: true if we find the key
  * */
 bool PSegment::search(const string& key, string& value) {
-    auto cur_run = pRun;
+    auto cur_run = get_run();
     int left = start;
     int right = end;
     int mid = 0;
@@ -819,10 +874,13 @@ bool PSegment::search(const string& key, string& value) {
     }
     return false;
 }
-
+/* get_run: return the top run of the seg */
+persistent_ptr<PRun> PSegment::get_run() {
+    return pRuns.front();
+}
 /* get_range: get the kvrange of the top layer */
 void PSegment::get_localRange(KVRange& kvRange) {
-    auto key_entry = pRun->key_entry;
+    auto key_entry = get_run()->key_entry;
     kvRange.start_key.assign(key_entry[start].key, KEY_SIZE);
     kvRange.end_key.assign(key_entry[end].key, KEY_SIZE);
     return;
@@ -831,7 +889,7 @@ void PSegment::get_localRange(KVRange& kvRange) {
 void PSegment::seek_begin() {
     //cout << "seek to begin of a segment" << endl;
     //cout << "put " << pRun->key_entry[start].key << "into stack" << endl;
-    RunIndex runIndex(pRun, start, 1);
+    RunIndex runIndex(get_run(), start, 1);
     search_stack.clear();
     run_set.clear();
     check_push(search_stack, runIndex);
@@ -903,7 +961,7 @@ bool PSegment::next(RunIndex& runIndex) {
 
 /* get_key: return a key by the index */
 char* PSegment::get_key(int index) {
-    return pRun->key_entry[index].key;
+    return get_run()->key_entry[index].key;
 }
 /* display: display the key range */
 void PSegment::display() {
