@@ -67,10 +67,10 @@ using namespace pmem::obj;
 namespace pmemkv {
 namespace nvlsm2 {
 
-#define RUN_SIZE 14400
+#define RUN_SIZE 10
 #define KEY_SIZE 16
 #define VAL_SIZE 128
-#define MAX_DEPTH 10
+#define MAX_DEPTH 4
 #define COM_RATIO 4
 #define PERSIST_POOL_SIZE 1
 #define COMPACT_POOL_SIZE 1
@@ -175,8 +175,10 @@ class PRun {
         KeyEntry key_entry[RUN_SIZE];
         char vals[VAL_SIZE * RUN_SIZE];
         size_t size;
-        int valid;
-        int referred;
+        int iter;
+        void seek(char* key);
+        bool next(char* key);
+        char* get_key(int index);
         void get_range(KVRange& range);
         void display();
         int find_key(const string& key, string& val, int left, int right, int& mid);
@@ -185,39 +187,17 @@ class PRun {
 struct RunIndex {
     persistent_ptr<PRun> pRun;
     int index;
-    int depth;
-    RunIndex(persistent_ptr<PRun> cur_run, int cur_index, int dep) {
+    RunIndex(persistent_ptr<PRun> cur_run, int cur_index) {
         pRun = cur_run;
         index = cur_index;
-        depth = dep;
     };
     RunIndex() {
         pRun = NULL;
         index = 0;
-        depth = 0;
     };
-    bool const operator==(const RunIndex& runIndex) const {
-        return pRun == runIndex.pRun 
-                && index == runIndex.index;
-    };
-    bool const operator<(const RunIndex& runIndex) const {
-        auto cur_key = pRun->key_entry[index].key;
-        auto key = runIndex.pRun->key_entry[runIndex.index].key;
-        int res = strncmp(cur_key, key, KEY_SIZE);
-        if (res != 0)
-            return res < 0;
-        else 
-            return depth < runIndex.depth;
-    };
-    bool const operator>(const RunIndex runIndex) const {
-        auto cur_key = pRun->key_entry[index].key;
-        auto key = runIndex.pRun->key_entry[runIndex.index].key;
-        int res = strncmp(cur_key, key, KEY_SIZE);
-        if (res != 0)
-            return res > 0;
-        else
-            return depth > runIndex.depth;
-    };
+    void display() {
+        cout << pRun->key_entry[index].key << endl;
+    }
 };
 /* persistent segment in a PRun */
 class PSegment {
@@ -228,17 +208,13 @@ class PSegment {
         size_t start;
         size_t end;
         int depth;
-        int max_stack;
-        map<RunIndex, int> search_stack;
-        set<persistent_ptr<PRun>> run_set;
+        int iter;
+        persistent_ptr<PRun> get_run(); // return the top run
         /* utilities */
         bool isInclude(persistent_ptr<PRun> run);
         void addRuns(list<persistent_ptr<PRun>> runs);
         void addRun(persistent_ptr<PRun> run);
-        persistent_ptr<PRun> get_run(); // return the top run
-        void seek(const string& key);
-        void seek_begin();
-        void check_push(map<RunIndex, int>& search_stack, RunIndex runIndex);
+        void seek(char* key);
         bool next(RunIndex& runIndex);
         bool search(const string& key, string& value);
         char* get_key(int index);
