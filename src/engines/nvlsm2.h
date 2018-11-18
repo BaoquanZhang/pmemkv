@@ -72,7 +72,7 @@ namespace nvlsm2 {
 #define RUN_SIZE 14400
 #define KEY_SIZE 16
 #define VAL_SIZE 128
-#define MAX_DEPTH 4
+#define MAX_DEPTH 10
 #define COM_RATIO 4
 #define PERSIST_POOL_SIZE 1
 #define COMPACT_POOL_SIZE 1
@@ -180,6 +180,7 @@ class PRun {
         char vals[VAL_SIZE * RUN_SIZE];
         size_t size;
         int iter;
+        int refered;
         void seek(char* key);
         bool next(RunIndex& runIndex);
         char* get_key(int index);
@@ -258,7 +259,7 @@ class MetaTable {
         void unlock();
         /* functions for segment ops in multiple layers */
         PSegment* getMerge(int id);
-        void merge(vector<persistent_ptr<PRun>>& runs);
+        void merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs);
         void add(vector<PSegment*> segs);
         void add(PSegment* seg);
         void del(vector<PSegment*> segs);

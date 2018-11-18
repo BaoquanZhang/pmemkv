@@ -41,7 +41,6 @@ namespace nvlsm2 {
 
 pool<LSM_Root> pmpool;
 size_t pmsize;
-unordered_map<string, int> ref_tbl;
 /* #####################static functions for multiple threads ####################### */
 /* persist: persist a mem_table to c0
  * v_nvlsm: an instance of nvlsm
@@ -197,11 +196,13 @@ void NVLsm2::display() {
         cout << "Component " << i << ": " << endl;
         meta_table[i].display();
     }
+    /*
     cout << "ref table: ";
     for (auto ref : ref_tbl) {
         cout << "(" << ref.first << "," << ref.second << ")";
     }
     cout << endl;
+    */
     cout << "=========== end displaying meta table ========" << endl;
 }
 /* compact: compact runs to a component 
@@ -229,12 +230,22 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
     }
     //display();
     vector<persistent_ptr<PRun>> mergeRes;
-    meta_table[comp].merge(mergeRes);
+    auto seg = meta_table[comp].getMerge(comp);
+    if (seg != NULL) {
+        if (seg->depth > 1) {
+            meta_table[comp].merge(seg, mergeRes);
+        } else {
+            mergeRes.push_back(seg->get_run());
+        }
+    }
     meta_table[comp].unlock();
     //cout << "finish build layers in " << comp << endl;
     if (mergeRes.size() > 0) {
         compact(comp + 1, mergeRes);
     }
+    if (seg)
+        meta_table[comp].del(seg);
+    //display();
     //cout << "finish merging in component " << comp << endl;
     return;
 }
@@ -423,8 +434,7 @@ inline void MetaTable::copy_kv(persistent_ptr<PRun> des_run, int des_i,
  *         runs -- merge results
  * */
 /* copy data between PRuns */
-void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
-    auto seg = getMerge(id);
+void MetaTable::merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
     if (seg == NULL) {
         return;
     }
@@ -464,7 +474,6 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
     //    run->display();
     //}
     //cout << endl;
-    del(seg);
     return;
 }
 /* display: display the ranges in the current component */
@@ -601,7 +610,6 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
     int up_left = 0;
     int btm_left = 0;
     int btm_right = 0;
-    int max_depth = 0;
     auto begin_seg = overlapped_segs.front();
     btm_left = begin_seg->start;
     btm_right = btm_left;
@@ -616,7 +624,6 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
     /* check if the skipped keys are enough to build a new seg */
     if (btm_right > btm_left) {
         new_seg = new PSegment(begin_seg, NULL, btm_left, btm_right - 1);
-        new_seg->depth = begin_seg->depth;
         new_segs.push_back(new_seg);
         btm_left = btm_right;
     }
@@ -643,7 +650,6 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
                 btm_right++;
             }
         }
-        max_depth = max(max_depth, overlap_seg->depth);
     }
     auto last_seg = overlapped_segs.back();
     auto btm_end = last_seg->get_key(btm_right); 
@@ -670,7 +676,6 @@ void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun
         }
     }
     new_seg = new PSegment(overlapped_segs, run, up_left, run->size - 1);
-    new_seg->depth = max_depth + 1;
     new_segs.push_back(new_seg);
     /* step 3 add the non-overlapped keys at the end */
     if (btm_right < last_seg->end) {
@@ -796,14 +801,14 @@ int PRun::find_key(const string& key, string& value, int left, int right, int& m
 
 /* ##################### PSegment ############################################# */
 PSegment::PSegment(PSegment* old_seg, persistent_ptr<PRun> run, size_t start_i, size_t end_i)
-    : start(start_i), end(end_i), depth(1), iter(0){
+    : start(start_i), end(end_i), depth(0), iter(0){
         if (run)
             addRun(run);
         if (old_seg)
             addRuns(old_seg->pRuns);
 }
 PSegment::PSegment(vector<PSegment*> old_segs, persistent_ptr<PRun> run, size_t start_i, size_t end_i)
-    : start(start_i), end(end_i), depth(1), iter(0) {
+    : start(start_i), end(end_i), depth(0), iter(0) {
         if (run)
             addRun(run);
         for (auto old_seg : old_segs)
@@ -813,14 +818,12 @@ PSegment::~PSegment() {
     for (auto run : runSet) {
         KVRange range;
         run->get_range(range);
-        string kv = range.start_key + range.end_key + to_string(run->id);
-        ref_tbl[kv]--;
-        if (ref_tbl[kv] == 0) {
+        run->refered--;
+        if (run->refered == 0) {
             //cout << "delete ";
             //run->display();
             //cout << endl;
             delete_persistent_atomic<PRun>(run);
-            ref_tbl.erase(kv);
         }
     }
 }
@@ -847,13 +850,8 @@ void PSegment::addRun(persistent_ptr<PRun> run) {
     if (runSet.count(run) == 0 && isInclude(run)) {
         runSet.emplace(run);
         pRuns.push_back(run);
-        KVRange range;
-        run->get_range(range);
-        string kv = range.start_key + range.end_key + to_string(run->id);
-        if (ref_tbl.count(kv) == 0)
-            ref_tbl[kv] = 1;
-        else
-            ref_tbl[kv]++;
+        run->refered++;
+        depth++;
     }
     return;
 }
@@ -976,10 +974,11 @@ void PSegment::display() {
     get_localRange(kvRange);
     kvRange.display();
     cout << "depth = " << depth << endl;
-    cout << "(";
-    for (auto run : pRuns)
+    for (auto run : pRuns) {
+        cout << "  **";
         run->display();
-    cout << ")" << endl;
+        cout << endl;
+    }
     return;
 }
 
