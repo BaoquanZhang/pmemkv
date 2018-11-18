@@ -33,6 +33,8 @@
 #pragma once
 /* utility */
 #include <pthread.h>
+#include <cstdlib>
+#include <ctime>
 #include <queue>
 #include <map>
 #include <stack>
@@ -67,7 +69,7 @@ using namespace pmem::obj;
 namespace pmemkv {
 namespace nvlsm2 {
 
-#define RUN_SIZE 10
+#define RUN_SIZE 14400
 #define KEY_SIZE 16
 #define VAL_SIZE 128
 #define MAX_DEPTH 4
@@ -82,6 +84,7 @@ class PRun;
 class PSegment;
 class MemTable;
 class NVLsm2;
+struct RunIndex;
 struct KVRange;
 
 /* PMEM structures */
@@ -173,11 +176,12 @@ class PRun {
         PRun();
         ~PRun();
         KeyEntry key_entry[RUN_SIZE];
+        int id; // random id
         char vals[VAL_SIZE * RUN_SIZE];
         size_t size;
         int iter;
         void seek(char* key);
-        bool next(char* key);
+        bool next(RunIndex& runIndex);
         char* get_key(int index);
         void get_range(KVRange& range);
         void display();
@@ -198,6 +202,18 @@ struct RunIndex {
     void display() {
         cout << pRun->key_entry[index].key << endl;
     }
+    inline char* const get_key() const {
+        return pRun->key_entry[index].key;
+    }
+    bool const operator == (const RunIndex& runIndex) const {
+        return strncmp(get_key(), runIndex.get_key(), KEY_SIZE) == 0;
+    };
+    bool const operator < (const RunIndex& runIndex) const {
+        return strncmp(get_key(), runIndex.get_key(), KEY_SIZE) < 0;
+    };
+    bool const operator>(const RunIndex runIndex) const {
+        return strncmp(get_key(), runIndex.get_key(), KEY_SIZE) > 0;
+    };
 };
 /* persistent segment in a PRun */
 class PSegment {
@@ -209,6 +225,7 @@ class PSegment {
         size_t end;
         int depth;
         int iter;
+        map<RunIndex, int> search_stack;
         persistent_ptr<PRun> get_run(); // return the top run
         /* utilities */
         bool isInclude(persistent_ptr<PRun> run);
@@ -228,23 +245,26 @@ class PSegment {
 /* Metadata table for sorted runs */
 class MetaTable {
     public:
+        int id;
         pthread_rwlock_t rwlock;
         size_t next_compact;  // index for the run of the last compaction
         map<KVRange, PSegment*> segRanges;
         MetaTable();
+        MetaTable(int comp_index);
         ~MetaTable();
         size_t getSize(); // get the size of ranges
         void rdlock();
         void wrlock();
         void unlock();
         /* functions for segment ops in multiple layers */
-        PSegment* getMerge();
+        PSegment* getMerge(int id);
         void merge(vector<persistent_ptr<PRun>>& runs);
         void add(vector<PSegment*> segs);
         void add(PSegment* seg);
         void del(vector<PSegment*> segs);
         void del(PSegment* seg); 
         bool search(const string& key, string& val);
+        bool seq_search(const string& key, string& val);
         void search(const string& key, vector<PSegment*>& segs);
         void search(KVRange& kvRange, vector<PSegment*>& segs);
         void build_layer(persistent_ptr<PRun> run);
