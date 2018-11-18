@@ -56,7 +56,7 @@ static void persist(void * v_nvlsm) {
     // allocate space from NVM and copy data from mem_table
     persistent_ptr<PRun> p_run;
     int i = 0;
-    cout << "allocating new run" << endl;
+    //cout << "allocating new run" << endl;
     make_persistent_atomic<PRun>(pmpool, p_run);
     auto key_entry = p_run->key_entry;
     auto vals = p_run->vals;
@@ -75,7 +75,7 @@ static void persist(void * v_nvlsm) {
     if (meta_table->ranges.size() > nvlsm->com_ratio)
         nvlsm->compact(0);
     //nvlsm->compact(p_run, 0);
-    nvlsm->displayMeta();
+    //nvlsm->displayMeta();
     //cout << "C0 has ";
     //meta_table->display();
     //cout << endl;
