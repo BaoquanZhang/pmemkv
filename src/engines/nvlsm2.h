@@ -167,8 +167,11 @@ struct KeyEntry {
     char key[KEY_SIZE];
     size_t val_len;
     char* p_val;
-    bool valid = true;
-    size_t next_key = -1; // offset of the bottom key, default -1
+    //size_t next_key = -1; // offset of the bottom key, default -1
+    //persistent_ptr<PRun> next_run = NULL;
+};
+struct BtmEntry {
+    int next_key = -1;
     persistent_ptr<PRun> next_run = NULL;
 };
 class PRun {
@@ -176,6 +179,7 @@ class PRun {
         PRun();
         ~PRun();
         KeyEntry key_entry[RUN_SIZE];
+        BtmEntry btm_entry[RUN_SIZE];
         int id; // random id
         char vals[VAL_SIZE * RUN_SIZE];
         size_t size;
@@ -189,8 +193,8 @@ class PRun {
 };
 /* segment iterator */
 struct RunIndex {
-    persistent_ptr<PRun> pRun;
-    int index;
+    persistent_ptr<PRun> pRun = NULL;
+    int index = -1;
     RunIndex(persistent_ptr<PRun> cur_run, int cur_index) {
         pRun = cur_run;
         index = cur_index;

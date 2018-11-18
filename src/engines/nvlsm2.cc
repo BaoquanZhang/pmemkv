@@ -587,8 +587,8 @@ void MetaTable::search(KVRange& kvRange, vector<PSegment*>& segs) {
 }
 /* build_layer: build a new layer using a seg */
 inline void MetaTable::build_link(persistent_ptr<PRun> src, int src_i, persistent_ptr<PRun> des, int des_i) {
-    src->key_entry[src_i].next_run = des;
-    src->key_entry[src_i].next_key = des_i;
+    src->btm_entry[src_i].next_run = des;
+    src->btm_entry[src_i].next_key = des_i;
     return;
 } 
 void MetaTable::do_build(vector<PSegment*>& overlapped_segs, persistent_ptr<PRun> run) {
@@ -879,8 +879,8 @@ bool PSegment::search(const string& key, string& value) {
         } else {
             persistent_ptr<PRun> left_run;
             persistent_ptr<PRun> right_run;
-            auto next_run = cur_run->key_entry[mid].next_run;
-            auto next_key = cur_run->key_entry[mid].next_key;
+            auto next_run = cur_run->btm_entry[mid].next_run;
+            auto next_key = cur_run->btm_entry[mid].next_key;
             if (next_run == NULL)
                 break;
             if (res < 0) {
@@ -889,8 +889,8 @@ bool PSegment::search(const string& key, string& value) {
                 right = left;
                 right_run = left_run;
                 if (mid < cur_run->size - 1) {
-                    right = cur_run->key_entry[mid + 1].next_key;
-                    right_run = cur_run->key_entry[mid + 1].next_run;
+                    right = cur_run->btm_entry[mid + 1].next_key;
+                    right_run = cur_run->btm_entry[mid + 1].next_run;
                 }
             } else {
                 right = next_key;
@@ -898,8 +898,8 @@ bool PSegment::search(const string& key, string& value) {
                 left = right;
                 left_run = right_run;
                 if (mid > 0) {
-                    left = cur_run->key_entry[mid - 1].next_key;
-                    left_run = cur_run->key_entry[mid - 1].next_run;
+                    left = cur_run->btm_entry[mid - 1].next_key;
+                    left_run = cur_run->btm_entry[mid - 1].next_run;
                 }
             }
             /* check if left_run and right_run are the same */
