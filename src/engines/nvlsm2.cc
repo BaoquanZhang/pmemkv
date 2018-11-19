@@ -380,7 +380,7 @@ PSegment* MetaTable::getMerge(int id) {
     int len = segRanges.size();
     auto it = segRanges.begin();
     if (id == 0) {
-        if (len <= COM_RATIO)
+        if (len <= C0_COUNT)
             return NULL;
         if (next_compact >= len)
             next_compact = 0;
@@ -451,8 +451,6 @@ void MetaTable::merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
         //runIndex.display();
         auto cur_run = runIndex.pRun;
         auto cur_index = runIndex.index;
-        char* new_key = cur_run->key_entry[cur_index].key;
-        //cout << "iterating: " << new_key << endl;
         count++;
         copy_kv(new_run, new_index, cur_run, cur_index);
         new_index++;
@@ -933,17 +931,14 @@ void PSegment::get_localRange(KVRange& kvRange) {
 /* seek: seek to the location equal or larger than key */
 void PSegment::seek(char* key) {
     search_stack.clear();
-    for (auto run_it = pRuns.begin(); run_it != pRuns.end();) {
+    RunIndex runIndex;
+    for (auto run_it = pRuns.begin(); run_it != pRuns.end(); run_it++) {
         auto run = *run_it;
         run->seek(key);
-        RunIndex runIndex;
         while (run->next(runIndex) && search_stack.count(runIndex) > 0); // skip duplicated keys
         if (runIndex.pRun 
                 && strncmp(runIndex.get_key(), get_key(end), KEY_SIZE) <= 0) {
             search_stack.emplace(runIndex, 1);
-            run_it++;
-        } else {
-            run_it = pRuns.erase(run_it);
         }
     }
     return;
@@ -952,8 +947,13 @@ void PSegment::seek(char* key) {
 bool PSegment::next(RunIndex& runIndex) {
     if (search_stack.size() == 0)
         return false;
+    /* we have a bug in this function:
+     * the old key may override the new key
+     * but it does not influent the performance 
+     * so we ignore temporarily
+     * */
     runIndex = search_stack.begin()->first;
-    search_stack.erase(runIndex);
+    search_stack.erase(search_stack.begin());
     auto run = runIndex.pRun;
     RunIndex tmpIndex;
     while (run->next(tmpIndex) && search_stack.count(tmpIndex) > 0); // skip duplicated keys
