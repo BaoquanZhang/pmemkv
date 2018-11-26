@@ -72,7 +72,7 @@ namespace nvlsm2 {
 #define RUN_SIZE 14400
 #define KEY_SIZE 16
 #define VAL_SIZE 128
-#define MAX_DEPTH 2
+#define MAX_DEPTH 4
 #define COM_RATIO 10
 #define C0_COUNT 4
 #define PERSIST_POOL_SIZE 1
