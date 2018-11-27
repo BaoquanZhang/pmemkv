@@ -41,6 +41,7 @@ namespace nvlsm2 {
 
 pool<LSM_Root> pmpool;
 size_t pmsize;
+size_t run_count = 0;
 /* #####################static functions for multiple threads ####################### */
 /* persist: persist a mem_table to c0
  * v_nvlsm: an instance of nvlsm
@@ -57,6 +58,7 @@ static void persist(void * v_nvlsm) {
     persistent_ptr<PRun> p_run;
     int i = 0;
     make_persistent_atomic<PRun>(pmpool, p_run);
+    run_count++;
     auto key_entry = p_run->key_entry;
     auto vals = p_run->vals;
     for (auto it = run->kv.begin(); it != run->kv.end(); it++) {
@@ -76,7 +78,7 @@ static void persist(void * v_nvlsm) {
     runs.push_back(p_run);
     nvlsm->compact(0, runs);
     //cout << "after building new layers: " << endl;
-    //nvlsm->display();
+    nvlsm->display();
     //cout << "persist stop" << endl;
 }
 /* ######################## Log #########################################*/
@@ -193,9 +195,10 @@ KVStatus NVLsm2::Remove(const string& key) {
 void NVLsm2::display() {
     cout << "=========== start displaying meta table ======" << endl;
     for (int i = 0; i < meta_table.size(); i++) {
-        cout << "Component " << i << ": " << endl;
+        //cout << "Component " << i << ": " << endl;
         meta_table[i].display();
     }
+    cout << "total run: " << run_count << endl;
     /*
     cout << "ref table: ";
     for (auto ref : ref_tbl) {
@@ -216,6 +219,7 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
         meta_table.emplace_back(comp);
     //cout << "start to build layers in " << comp << endl;
     meta_table[comp].wrlock();
+    meta_table[comp].cur_size += runs.size();
     for (auto run : runs) {
         //cout << "building layers for: ";
         //run->display();
@@ -316,11 +320,11 @@ bool MemTable::search(const string &key, string &val) {
 }
 
 /* ################### MetaTable ##################################### */
-MetaTable::MetaTable() : next_compact(0) {
+MetaTable::MetaTable() : cur_size(0), next_compact(0) {
     pthread_rwlock_init(&rwlock, NULL);
 }
 MetaTable::MetaTable(int comp_index) 
-    : next_compact(0), id(comp_index) {
+    : cur_size(0), next_compact(0), id(comp_index) {
     pthread_rwlock_init(&rwlock, NULL);
 }
 
@@ -443,6 +447,7 @@ void MetaTable::merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
     //cout << endl;
     persistent_ptr<PRun> new_run;
     make_persistent_atomic<PRun>(pmpool, new_run);
+    run_count++;
     int new_index = 0;
     RunIndex runIndex;
     long count = 0;
@@ -458,6 +463,7 @@ void MetaTable::merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
             new_run->size = new_index;
             runs.push_back(new_run);
             make_persistent_atomic<PRun>(pmpool, new_run);
+            run_count++;
             new_index = 0;
         }
     }
@@ -466,6 +472,7 @@ void MetaTable::merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
         runs.push_back(new_run);
     } else {
         delete_persistent_atomic<PRun>(new_run);
+        run_count--;
     }
     //cout << "merge results: " << runs.size() << "runs and " << count << "kvs" << endl;
     //for (auto run : runs) {
@@ -476,7 +483,8 @@ void MetaTable::merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
 }
 /* display: display the ranges in the current component */
 void MetaTable::display() {
-    //cout << segRanges.size() << " ranges." << endl;
+    cout << segRanges.size() << " ";
+    /*
     for (auto segRange : segRanges) {
         segRange.second->display();
         KVRange kvRange;
@@ -493,6 +501,7 @@ void MetaTable::display() {
         }
     }
     cout << endl;
+    */
     return;
 }
 /* lock/unlock: lock operations of metaTable */
@@ -800,17 +809,27 @@ int PRun::find_key(const string& key, string& value, int left, int right, int& m
 /* ##################### PSegment ############################################# */
 PSegment::PSegment(PSegment* old_seg, persistent_ptr<PRun> run, size_t start_i, size_t end_i)
     : start(start_i), end(end_i), depth(0), iter(0){
-        if (run)
+        if (run) {
             addRun(run);
-        if (old_seg)
+            depth += 1;
+        }
+        if (old_seg) {
+            depth += old_seg->depth;
             addRuns(old_seg->pRuns);
+        }
 }
 PSegment::PSegment(vector<PSegment*> old_segs, persistent_ptr<PRun> run, size_t start_i, size_t end_i)
     : start(start_i), end(end_i), depth(0), iter(0) {
-        if (run)
+        if (run) {
             addRun(run);
-        for (auto old_seg : old_segs)
+            depth += 1;
+        }
+        int max_depth = 0;
+        for (auto old_seg : old_segs) {
+            max_depth = max(max_depth, old_seg->depth);
             addRuns(old_seg->pRuns);
+        }
+        depth += max_depth;
 }
 PSegment::~PSegment() {
     for (auto run : runSet) {
@@ -822,6 +841,7 @@ PSegment::~PSegment() {
             //run->display();
             //cout << endl;
             delete_persistent_atomic<PRun>(run);
+            run_count--;
         }
     }
 }
@@ -849,7 +869,6 @@ void PSegment::addRun(persistent_ptr<PRun> run) {
         runSet.emplace(run);
         pRuns.push_back(run);
         run->refered++;
-        depth++;
     }
     return;
 }

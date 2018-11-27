@@ -248,6 +248,7 @@ class PSegment {
 class MetaTable {
     public:
         int id;
+        int cur_size;
         pthread_rwlock_t rwlock;
         size_t next_compact;  // index for the run of the last compaction
         map<KVRange, PSegment*> segRanges;
