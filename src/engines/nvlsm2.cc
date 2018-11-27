@@ -245,7 +245,18 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
     meta_table[comp].unlock();
     //cout << "finish build layers in " << comp << endl;
     if (mergeRes.size() > 0) {
-        compact(comp + 1, mergeRes);
+        if (comp == 0 
+                || meta_table[comp].cur_size > pow(COM_RATIO, comp)) {
+            meta_table[comp].cur_size -= mergeRes.size();
+            compact(comp + 1, mergeRes);
+        } else {
+            meta_table[comp].wrlock();
+            for (auto run : mergeRes) {
+                auto seg = new PSegment(NULL, run, 0, run->size - 1);
+                meta_table[comp].add(seg);
+            }
+            meta_table[comp].unlock();
+        }
     }
     if (seg)
         meta_table[comp].del(seg);
@@ -483,7 +494,7 @@ void MetaTable::merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs) {
 }
 /* display: display the ranges in the current component */
 void MetaTable::display() {
-    cout << segRanges.size() << " ";
+    cout << segRanges.size() << "(" << cur_size << ") ";
     /*
     for (auto segRange : segRanges) {
         segRange.second->display();
