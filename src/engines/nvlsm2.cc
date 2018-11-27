@@ -41,6 +41,7 @@ namespace nvlsm2 {
 
 pool<LSM_Root> pmpool;
 size_t pmsize;
+size_t run_count = 0;
 /* #####################static functions for multiple threads ####################### */
 /* persist: persist a mem_table to c0
  * v_nvlsm: an instance of nvlsm
@@ -57,6 +58,7 @@ static void persist(void * v_nvlsm) {
     persistent_ptr<PRun> p_run;
     int i = 0;
     make_persistent_atomic<PRun>(pmpool, p_run);
+    run_count++;
     auto key_entry = p_run->key_entry;
     auto vals = p_run->vals;
     for (auto it = run->kv.begin(); it != run->kv.end(); it++) {
@@ -77,7 +79,8 @@ static void persist(void * v_nvlsm) {
     runs.push_back(p_run);
     nvlsm->compact(0, runs);
     //cout << "after building new layers: " << endl;
-    //nvlsm->display();
+    nvlsm->display();
+    cout << "total run = " << run_count << endl;
     //cout << "persist stop" << endl;
 }
 /* ######################## Log #########################################*/
@@ -191,7 +194,7 @@ KVStatus NVLsm2::Remove(const string& key) {
 void NVLsm2::display() {
     cout << "=========== start displaying meta table ======" << endl;
     for (int i = 0; i < meta_table.size(); i++) {
-        cout << "Component " << i << ": " << endl;
+        //cout << "Component " << i << ": " << endl;
         meta_table[i].display();
     }
     cout << "=========== end displaying meta table ========" << endl;
@@ -203,8 +206,9 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
     //cout << "start to compact" << endl;
     if (runs.size() == 0)
         return;
-    if (meta_table.size() == comp) 
+    if (meta_table.size() == comp) { 
         meta_table.emplace_back();
+    }
     //cout << "start to build layers" << endl;
     meta_table[comp].wrlock();
     for (auto run : runs) {
@@ -411,6 +415,7 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
     //cout << endl;
     persistent_ptr<PRun> new_run;
     make_persistent_atomic<PRun>(pmpool, new_run);
+    run_count++;
     int new_index = 0;
     RunIndex runIndex;
     long count = 0;
@@ -434,6 +439,7 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
                 new_run->valid = new_index;
                 runs.push_back(new_run);
                 make_persistent_atomic<PRun>(pmpool, new_run);
+                run_count++;
                 new_index = 0;
             }
         }
@@ -441,11 +447,15 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
         //cout << "valid from " << runIndex.pRun->valid;
         cur_run->key_entry[cur_index].valid = false;
         cur_run->valid--;
-        if (cur_run->key_entry[cur_index].next_run)
-            cur_run->key_entry[cur_index].next_run->referred--;
         //cout << " to " << runIndex.pRun->valid << endl;
         if (cur_run->valid <= 0 && cur_run->referred <= 0) {
             to_del.push_back(cur_run);
+        }
+        auto next_run = cur_run->key_entry[cur_index].next_run;
+        if (next_run) {
+            next_run->referred--;
+            if (next_run->valid <= 0 && next_run->referred <= 0)
+                to_del.push_back(next_run);
         }
     }
     if (new_index > 0) {
@@ -454,6 +464,7 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
         runs.push_back(new_run);
     } else {
         delete_persistent_atomic<PRun>(new_run);
+        run_count--;
     }
     //cout << "merge results: " << runs.size() << "runs and " << count << "kvs" << endl;
     //for (auto run : runs) {
@@ -466,12 +477,14 @@ void MetaTable::merge(vector<persistent_ptr<PRun>>& runs) {
     for (auto run : to_del) {
         //run->display();
         delete_persistent_atomic<PRun>(run);
+        run_count--;
     }
     return;
 }
 /* display: display the ranges in the current component */
 void MetaTable::display() {
-    //cout << segRanges.size() << " ranges." << endl;
+    cout << segRanges.size() << " ";
+    /*
     for (auto segRange : segRanges) {
         segRange.first.display();
         auto pRun = segRange.second->pRun;
@@ -493,6 +506,7 @@ void MetaTable::display() {
         }
     }
     cout << endl;
+    */
     return;
 }
 /* lock/unlock: lock operations of metaTable */
@@ -845,8 +859,8 @@ void PSegment::seek_begin() {
 void PSegment::check_push(map<RunIndex, int>& search_stack, RunIndex runIndex) {
     auto cur_run = runIndex.pRun;
     auto cur_index = runIndex.index;
-    if (cur_run->key_entry[cur_index].valid == false)
-        return;
+    //if (cur_run->key_entry[cur_index].valid == false)
+    //    return;
     if (search_stack.count(runIndex) > 0) {
         //cout << "find same key in the stack" << endl;
         return;

@@ -9,4 +9,4 @@
 #define COMPACT_POOL_SIZE 1
 #define SLOW_DOWN_US 2
 /* skip array config */
-#define MAX_DEPTH 16
+#define MAX_DEPTH 4
