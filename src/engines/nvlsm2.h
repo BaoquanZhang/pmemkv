@@ -261,6 +261,7 @@ class MetaTable {
         void unlock();
         /* functions for segment ops in multiple layers */
         PSegment* getMerge(int id);
+        void getMerge(int id, vector<PSegment*>& segs);
         void merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs);
         void add(vector<PSegment*> segs);
         void add(PSegment* seg);

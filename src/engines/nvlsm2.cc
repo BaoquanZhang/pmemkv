@@ -245,6 +245,7 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
     meta_table[comp].unlock();
     //cout << "finish build layers in " << comp << endl;
     if (mergeRes.size() > 0) {
+        /*
         if (comp == 0 
                 || meta_table[comp].cur_size > pow(COM_RATIO, comp)) {
             meta_table[comp].cur_size -= mergeRes.size();
@@ -256,6 +257,20 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
                 meta_table[comp].add(seg);
             }
             meta_table[comp].unlock();
+        }
+        */
+        if (comp > 0
+                && comp == meta_table.size() - 1
+                && meta_table[comp].cur_size <= pow(COM_RATIO, comp)) {
+            meta_table[comp].wrlock();
+            for (auto run : mergeRes) {
+                auto seg = new PSegment(NULL, run, 0, run->size - 1);
+                meta_table[comp].add(seg);
+            }
+            meta_table[comp].unlock(); 
+        } else {
+            meta_table[comp].cur_size -= mergeRes.size();
+            compact(comp + 1, mergeRes);
         }
     }
     if (seg)
