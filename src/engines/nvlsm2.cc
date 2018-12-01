@@ -33,6 +33,7 @@
 #include <iostream>
 #include "nvlsm2.h"
 
+//#define Baoquan // for RA
 #define DO_LOG 0
 #define LOG(msg) if (DO_LOG) std::cout << "[nvlsm] " << msg << "\n"
 
@@ -42,6 +43,8 @@ namespace nvlsm2 {
 pool<LSM_Root> pmpool;
 size_t pmsize;
 size_t run_count = 0;
+size_t read_count = 0;
+size_t million = 1;
 /* #####################static functions for multiple threads ####################### */
 /* persist: persist a mem_table to c0
  * v_nvlsm: an instance of nvlsm
@@ -69,7 +72,7 @@ static void persist(void * v_nvlsm) {
         i++;
     }
     p_run->size = i;
-    p_run.persist();
+    //p_run.persist();
     delete run;
     /* start to build layers */ 
     //cout << "before building new layers: " << endl;
@@ -78,7 +81,7 @@ static void persist(void * v_nvlsm) {
     runs.push_back(p_run);
     nvlsm->compact(0, runs);
     //cout << "after building new layers: " << endl;
-    nvlsm->display();
+    //nvlsm->display();
     //cout << "persist stop" << endl;
 }
 /* ######################## Log #########################################*/
@@ -152,13 +155,21 @@ KVStatus NVLsm2::Get(const string& key, string* value) {
         value->append(val);
         return OK;
     }
-
+#ifdef Baoquan
+    if (read_count > million * 100000000) {
+        cout << "read_count:" << read_count << endl;
+        million++;
+    }
+#endif
     for (int i = 0; i < meta_table.size(); i++) {
         //cout << "total " << meta_table.size() << " component";
         //cout << ": searchng " << key << " in compoent " << i << endl;
         meta_table[i].rdlock();
+        /*
         if ((i == 0 && meta_table[i].seq_search(key, val))
                     || (i > 0 && meta_table[i].search(key, val))) {
+                    */
+        if (meta_table[i].search(key, val)) {
             value->append(val);
             meta_table[i].unlock();
             return OK;
@@ -194,11 +205,14 @@ KVStatus NVLsm2::Remove(const string& key) {
 /* display the meta tables */
 void NVLsm2::display() {
     cout << "=========== start displaying meta table ======" << endl;
+    size_t allocated = 0;
     for (int i = 0; i < meta_table.size(); i++) {
         //cout << "Component " << i << ": " << endl;
         meta_table[i].display();
+        allocated += meta_table[i].cur_size;
     }
-    cout << "total run: " << run_count << endl;
+    cout << "allocated: " << allocated;
+    cout << " remain size: " << run_count << endl;
     /*
     cout << "ref table: ";
     for (auto ref : ref_tbl) {
@@ -220,20 +234,27 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
     //cout << "start to build layers in " << comp << endl;
     meta_table[comp].wrlock();
     meta_table[comp].cur_size += runs.size();
+    meta_log->append("build_layres\n");
+    meta_log.persist();
     for (auto run : runs) {
         //cout << "building layers for: ";
         //run->display();
         //cout << endl;
+        /* write to c0 directly */
+        /*
         if (comp == 0) {
-            /* write to c0 directly */
             auto seg = new PSegment(NULL, run, 0, run->size - 1);
             meta_table[comp].add(seg);
         } else {
             meta_table[comp].build_layer(run);
-        }
+        }*/
+        /* build layer for C0 */
+        meta_table[comp].build_layer(run);
     }
     //display();
     vector<persistent_ptr<PRun>> mergeRes;
+    meta_log->append("merge seg\n");
+    meta_log.persist();
     auto seg = meta_table[comp].getMerge(comp);
     if (seg != NULL) {
         if (seg->depth > 1) {
@@ -245,6 +266,7 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
     meta_table[comp].unlock();
     //cout << "finish build layers in " << comp << endl;
     if (mergeRes.size() > 0) {
+        compact(comp + 1, mergeRes);
         /*
         if (comp == 0 
                 || meta_table[comp].cur_size > pow(COM_RATIO, comp)) {
@@ -258,7 +280,6 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
             }
             meta_table[comp].unlock();
         }
-        */
         if (comp > 0
                 && comp == meta_table.size() - 1
                 && meta_table[comp].cur_size <= pow(COM_RATIO, comp)) {
@@ -272,11 +293,20 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
             meta_table[comp].cur_size -= mergeRes.size();
             compact(comp + 1, mergeRes);
         }
-    }
-    if (seg)
+        */
+     } else {
+         for (auto run : runs)
+             run.persist();
+     }
+    if (seg) {
+        meta_log->append("update metadata\n");
+        meta_log.persist();
         meta_table[comp].del(seg);
+    }
     //display();
     //cout << "finish merging in component " << comp << endl;
+    meta_log->append("compaction done\n");
+    meta_log.persist();
     return;
 }
 
@@ -409,6 +439,7 @@ PSegment* MetaTable::getMerge(int id) {
     //cout << "getting seg to merge " << endl;
     int len = segRanges.size();
     auto it = segRanges.begin();
+    /* //get C0 with round-robubin
     if (id == 0) {
         if (len <= C0_COUNT)
             return NULL;
@@ -417,7 +448,7 @@ PSegment* MetaTable::getMerge(int id) {
         advance(it, next_compact);
         next_compact++;
         return it->second;
-    }
+    }*/
     int cur = 0;
     if (next_compact < len) {
         advance(it, cur);
@@ -812,12 +843,15 @@ int PRun::find_key(const string& key, string& value, int left, int right, int& m
     //display();
     //cout << " left = " << left << ", right = " << right;
     //cout << endl;
-    if (left > right) {
+    /*if (left > right) {
         cout << "error happends! left > right when binary searching" << endl;
         exit(-1);
-    }
+    }*/
     int res = 0;
     while (left <= right) {
+#ifdef Baoquan
+        read_count++;
+#endif
         mid = left + (right - left) / 2;
         res = strncmp(key_entry[mid].key, key.c_str(), KEY_SIZE);
         if (res == 0) {
@@ -910,6 +944,8 @@ bool PSegment::search(const string& key, string& value) {
     int right = end;
     int mid = 0;
     int cur_dep = 1;
+    persistent_ptr<PRun> left_run = NULL;
+    persistent_ptr<PRun> right_run = NULL;
     while (cur_run && cur_dep <= depth) {
         //cur_run->display();
         //cout << "[" << left << "," << right << "]" << endl;
@@ -918,45 +954,33 @@ bool PSegment::search(const string& key, string& value) {
             //cout << "PSeg: succeed to search " << key << endl;
             return true;
         } else {
-            persistent_ptr<PRun> left_run;
-            persistent_ptr<PRun> right_run;
-            auto next_run = cur_run->key_entry[mid].next_run;
-            auto next_key = cur_run->key_entry[mid].next_key;
-            if (next_run == NULL)
+            left_run = cur_run->key_entry[mid].next_run;
+            if (left_run == NULL)
                 break;
-            if (res < 0) {
-                left = next_key;
-                left_run = next_run;
-                right = left;
-                right_run = left_run;
-                if (mid < cur_run->size - 1) {
-                    right = cur_run->key_entry[mid + 1].next_key;
-                    right_run = cur_run->key_entry[mid + 1].next_run;
-                }
-            } else {
-                right = next_key;
-                right_run = next_run;
-                left = right;
-                left_run = right_run;
-                if (mid > 0) {
-                    left = cur_run->key_entry[mid - 1].next_key;
-                    left_run = cur_run->key_entry[mid - 1].next_run;
-                }
+            left = cur_run->key_entry[mid].next_key;
+            right = left;
+            right_run = left_run;
+            if (res < 0 && mid < cur_run->size - 1) {
+                // current mid is smaller than the key
+                right = cur_run->key_entry[mid + 1].next_key;
+                right_run = cur_run->key_entry[mid + 1].next_run;
+            } else if (res > 0 && mid > 0) {
+                left = cur_run->key_entry[mid - 1].next_key;
+                left_run = cur_run->key_entry[mid - 1].next_run;
             }
-            /* check if left_run and right_run are the same */
-            if (left_run == right_run) {
+            /* check which run should we go */
+            if (left_run
+                    && strncmp(key.c_str(), left_run->get_key(left_run->size - 1), KEY_SIZE) <= 0) {
                 cur_run = left_run;
+                right = left_run->size - 1; 
             } else {
-                int left_end = left_run->size - 1;
-                if (strncmp(key.c_str(), left_run->key_entry[left_end].key, KEY_SIZE) > 0) {
-                    cur_run = right_run;
-                    left = 0;
-                } else {
-                    cur_run = left_run;
-                    right = left_run->size - 1;
-                }
+                cur_run = right_run;
+                left = 0;
             }
         }
+        /* I don't know why but sometime left > right happens */
+        //if (left > right)
+        //    left = right;
         cur_dep++;
     }
     //cout << "PSeg: fail to search " << key << endl;
