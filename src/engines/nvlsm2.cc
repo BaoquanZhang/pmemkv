@@ -42,6 +42,10 @@ namespace nvlsm2 {
 pool<LSM_Root> pmpool;
 size_t pmsize;
 size_t run_count = 0;
+size_t read_count = 0;
+size_t write_count = 0;
+size_t read_unit = 0;
+size_t write_unit = 0;
 /* #####################static functions for multiple threads ####################### */
 /* persist: persist a mem_table to c0
  * v_nvlsm: an instance of nvlsm
@@ -233,6 +237,7 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
         }
     }
     //display();
+    meta_table[comp].unlock();
     vector<persistent_ptr<PRun>> mergeRes;
     auto seg = meta_table[comp].getMerge(comp);
     if (seg != NULL) {
@@ -242,7 +247,6 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
             mergeRes.push_back(seg->get_run());
         }
     }
-    meta_table[comp].unlock();
     //cout << "finish build layers in " << comp << endl;
     if (mergeRes.size() > 0) {
         /*
@@ -457,6 +461,13 @@ inline void MetaTable::copy_kv(persistent_ptr<PRun> des_run, int des_i,
     strncpy(&des_vals[des_i * VAL_SIZE], &src_vals[src_i * VAL_SIZE], src_entry[src_i].val_len);
     des_entry[des_i].val_len = src_entry[src_i].val_len;
     des_entry[des_i].p_val = &des_vals[des_i * VAL_SIZE];
+#ifdef AMP
+    write_count++;
+    if (write_count >= write_unit * 10000000) {
+        cout << "write_count: " << write_count << endl;
+        write_unit++;
+    }
+#endif
     return;
 }
 /* merge: merge all layers of a seg 
@@ -818,6 +829,13 @@ int PRun::find_key(const string& key, string& value, int left, int right, int& m
     }
     int res = 0;
     while (left <= right) {
+#ifdef AMP
+        read_count++;
+        if (read_count > read_unit * 100000000) {
+            cout << "read_count: " << read_count << endl;
+            read_unit++;
+        }
+#endif
         mid = left + (right - left) / 2;
         res = strncmp(key_entry[mid].key, key.c_str(), KEY_SIZE);
         if (res == 0) {
