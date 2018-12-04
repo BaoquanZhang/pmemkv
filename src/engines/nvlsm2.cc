@@ -239,13 +239,22 @@ void NVLsm2::compact(int comp, vector<persistent_ptr<PRun>>& runs) {
     //display();
     meta_table[comp].unlock();
     vector<persistent_ptr<PRun>> mergeRes;
-    auto seg = meta_table[comp].getMerge(comp);
-    if (seg != NULL) {
-        if (seg->depth > 1) {
-            meta_table[comp].merge(seg, mergeRes);
-        } else {
-            mergeRes.push_back(seg->get_run());
+    PSegment* seg = NULL;
+    while (mergeRes.size() == 0 && comp < meta_table.size()) {
+        //cout << "getting merging from " << comp << endl;
+        meta_table[comp].wrlock();
+        seg = meta_table[comp].getMerge(comp);
+        if (seg != NULL) {
+            if (seg->depth > 1) {
+                meta_table[comp].merge(seg, mergeRes);
+            } else {
+                mergeRes.push_back(seg->get_run());
+            }
+            meta_table[comp].unlock();
+            break;
         }
+        meta_table[comp].unlock();
+        comp++;
     }
     //cout << "finish build layers in " << comp << endl;
     if (mergeRes.size() > 0) {
