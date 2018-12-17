@@ -71,6 +71,9 @@ static void persist(void * v_nvlsm) {
         key_entry[i].val_len = it->second.size();
         key_entry[i].p_val = &vals[i * VAL_SIZE];
         i++;
+#ifdef AMP
+        write_count++;
+#endif
     }
     p_run->size = i;
     p_run.persist();
@@ -433,7 +436,7 @@ PSegment* MetaTable::getMerge(int id) {
     }
     int cur = 0;
     if (next_compact < len) {
-        advance(it, cur);
+        advance(it, next_compact);
         cur = next_compact;
     }
     next_compact = cur;
