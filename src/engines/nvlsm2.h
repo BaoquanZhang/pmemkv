@@ -33,13 +33,20 @@
 #pragma once
 /* utility */
 #include <pthread.h>
+#include <cstdlib>
+#include <ctime>
 #include <queue>
 #include <map>
+#include <stack>
 #include <unistd.h>
 #include <algorithm>
 #include <ctime>
 #include <cmath>
 #include <string>
+#include <set>
+#include <unordered_map>
+#include <unordered_set>
+#include <list>
 /* thread pool headers */
 #include "nvlsm/threadpool.h"
 /* pmdk headers */
@@ -61,20 +68,21 @@ using namespace std;
 using namespace pmem::obj;
 
 namespace pmemkv {
-namespace nvlsm {
+namespace nvlsm2 {
 
-const string ENGINE = "nvlsm";                         // engine identifier
+const string ENGINE = "nvlsm2"; // engine identifier
 class Run;
 class PRun;
-class PKVPair;
+class PSegment;
 class MemTable;
-class NVLsm;
+class NVLsm2;
+struct RunIndex;
+struct KVRange;
 
 /* PMEM structures */
 struct LSM_Root {                 // persistent root object
     persistent_ptr<Run> head;   // head of the vector of levels
 };
-
 /* KVRange : range for runs */
 struct KVRange {
     string start_key;
@@ -128,25 +136,6 @@ class Run {
         bool search(string &req_key, string &req_val);
 };
 
-/* PRun: container for storing kv_pairs on pmem*/
-struct KeyEntry {
-    char key[KEY_SIZE];
-    size_t val_len;
-    char* p_val;
-};
-class PRun {
-    public:
-        PRun();
-        ~PRun();
-        //persistent_ptr<KeyEntry[RUN_SIZE]> key_entry;
-        //persistent_ptr<char[VAL_SIZE * RUN_SIZE]> vals;
-        KeyEntry key_entry[RUN_SIZE];
-        char vals[VAL_SIZE * RUN_SIZE];
-        size_t iter;
-        size_t size;
-        void get_range(KVRange& range);
-};
-
 /* MemTable: the write buffer in DRAM */
 class MemTable {
     private:
@@ -165,40 +154,127 @@ class MemTable {
         bool search(const string &key, string &val);
 };
 
+/* PRun: container for storing kv_pairs on pmem*/
+struct KeyEntry {
+    char key[KEY_SIZE];
+    size_t val_len;
+    char* p_val;
+    bool valid = true;
+    size_t next_key = -1; // offset of the bottom key, default -1
+    persistent_ptr<PRun> next_run = NULL;
+};
+class PRun {
+    public:
+        PRun();
+        ~PRun();
+        KeyEntry key_entry[RUN_SIZE];
+        int id; // random id
+        char vals[VAL_SIZE * RUN_SIZE];
+        size_t size;
+        int iter;
+        int refered;
+        void seek(char* key);
+        bool next(RunIndex& runIndex);
+        char* get_key(int index);
+        void get_range(KVRange& range);
+        void display();
+        int find_key(const string& key, string& val, int left, int right, int& mid);
+};
+/* segment iterator */
+struct RunIndex {
+    persistent_ptr<PRun> pRun;
+    int index;
+    RunIndex(persistent_ptr<PRun> cur_run, int cur_index) {
+        pRun = cur_run;
+        index = cur_index;
+    };
+    RunIndex() {
+        pRun = NULL;
+        index = 0;
+    };
+    void display() {
+        cout << pRun->key_entry[index].key << endl;
+    }
+    inline char* const get_key() const {
+        return pRun->key_entry[index].key;
+    }
+    bool const operator == (const RunIndex& runIndex) const {
+        return strncmp(get_key(), runIndex.get_key(), KEY_SIZE) == 0;
+    };
+    bool const operator < (const RunIndex& runIndex) const {
+        return strncmp(get_key(), runIndex.get_key(), KEY_SIZE) < 0;
+    };
+    bool const operator>(const RunIndex runIndex) const {
+        return strncmp(get_key(), runIndex.get_key(), KEY_SIZE) > 0;
+    };
+};
+/* persistent segment in a PRun */
+class PSegment {
+    public:
+        /* variable */
+        list<persistent_ptr<PRun>> pRuns; // included runs, the front() is the top
+        set<persistent_ptr<PRun>> runSet; // all of the runs in a segment
+        size_t start;
+        size_t end;
+        int depth;
+        int iter;
+        map<RunIndex, int> search_stack;
+        persistent_ptr<PRun> get_run(); // return the top run
+        /* utilities */
+        bool isInclude(persistent_ptr<PRun> run);
+        void addRuns(list<persistent_ptr<PRun>> runs);
+        void addRun(persistent_ptr<PRun> run);
+        void seek(char* key);
+        bool next(RunIndex& runIndex);
+        bool search(const string& key, string& value);
+        char* get_key(int index);
+        void get_localRange(KVRange& kvRange);
+        void display();
+        PSegment(PSegment* old_seg, persistent_ptr<PRun> p_run, size_t start_i, size_t end_i);
+        PSegment(vector<PSegment*> old_segs, persistent_ptr<PRun> p_run, size_t start_i, size_t end_i);
+        ~PSegment();
+};
+
 /* Metadata table for sorted runs */
 class MetaTable {
     public:
+        int id;
+        int cur_size;
         pthread_rwlock_t rwlock;
         size_t next_compact;  // index for the run of the last compaction
-        map<KVRange, persistent_ptr<PRun>> ranges;
+        map<KVRange, PSegment*> segRanges;
         MetaTable();
+        MetaTable(int comp_index);
         ~MetaTable();
         size_t getSize(); // get the size of ranges
-        bool add(vector<persistent_ptr<PRun>> runs);
-        void add(persistent_ptr<PRun> run);
-        bool del(persistent_ptr<PRun> runs);
-        bool del(vector<persistent_ptr<PRun>> runs);
-        bool search(const string &key, string &value); // search a key in components > 0
-        bool seq_search(const string &key, string &value); // search a key in component 0
-        void search(KVRange &range, vector<persistent_ptr<PRun>> &runs);
-        void del_data();
+        void rdlock();
+        void wrlock();
+        void unlock();
+        /* functions for segment ops in multiple layers */
+        PSegment* getMerge(int id);
+        void getMerge(int id, vector<PSegment*>& segs);
+        void merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs);
+        void add(vector<PSegment*> segs);
+        void add(PSegment* seg);
+        void del(vector<PSegment*> segs);
+        void del(PSegment* seg); 
+        bool search(const string& key, string& val);
+        bool seq_search(const string& key, string& val);
+        void search(const string& key, vector<PSegment*>& segs);
+        void search(KVRange& kvRange, vector<PSegment*>& segs);
+        void build_layer(persistent_ptr<PRun> run);
+        void do_build(vector<PSegment*>& overlap_segs, persistent_ptr<PRun> run);
+        void build_link(persistent_ptr<PRun> src, int src_i, persistent_ptr<PRun> des, int des_i);
         void display();
-        persistent_ptr<PRun> getCompact(); // get the run for compaction
+        void copy_kv(persistent_ptr<PRun> des_run, int des_i, 
+                        persistent_ptr<PRun> src_run, int src_i);
+        PSegment* create_pseg(vector<PSegment*> old_segs, persistent_ptr<PRun> run, 
+                int start, int end, int depth);
+        PSegment* create_pseg(PSegment* old_seg, persistent_ptr<PRun> run, 
+                int start, int end, int depth);
 };
 
-/* the basic unit of a compaction */
-class CompactionUnit {
-    public:
-        size_t index;   // index for the current component   
-        persistent_ptr<PRun> up_run;
-        vector<persistent_ptr<PRun>> low_runs;
-        vector<persistent_ptr<PRun>> new_runs;
-        CompactionUnit();
-        ~CompactionUnit();
-        void display();
-};
-
-class NVLsm : public KVEngine {
+class NVLsm2 : public KVEngine {
     private:
         ThreadPool * persist_pool;
         ThreadPool * compact_pool;
@@ -206,19 +282,15 @@ class NVLsm : public KVEngine {
         size_t run_size;                                     // the number of kv pairs
         size_t layer_depth;
         size_t com_ratio;
-        NVLsm(const string& path, const size_t size);        // default constructor
-        ~NVLsm();                                          // default destructor
+        NVLsm2(const string& path, const size_t size);        // default constructor
+        ~NVLsm2();                                          // default destructor
         // internal structure
         MemTable * mem_table;
         vector<MetaTable> meta_table;
         persistent_ptr<Log> meta_log; // log for meta table
         // utility
-        CompactionUnit * plan_compaction(size_t index);
-        void compact(int index);
-        void compact(persistent_ptr<PRun> run, int index);
-        void merge_sort(CompactionUnit * unit);
-        void displayMeta();
-        void copy_kv(persistent_ptr<PRun> des_run, int des_i, persistent_ptr<PRun> src_run, int src_i);
+        void display();
+        void compact(int comp, vector<persistent_ptr<PRun>>& runs);
         // public interface
         string Engine() final { return ENGINE; }               // engine identifier
         KVStatus Get(int32_t limit,                            // copy value to fixed-size buffer
@@ -233,5 +305,5 @@ class NVLsm : public KVEngine {
         KVStatus Remove(const string& key) final;              // remove value for key
 };
 
-} // namespace nvlsm
+} // namespace nvlsm2
 } // namespace pmemkv
