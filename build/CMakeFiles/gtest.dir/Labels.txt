@@ -1,0 +1,13 @@
+# Target labels
+ gtest
+# Source files and their labels
+/home/smr_admin/pmemkv/build/CMakeFiles/gtest
+/home/smr_admin/pmemkv/build/CMakeFiles/gtest.rule
+/home/smr_admin/pmemkv/build/CMakeFiles/gtest-complete.rule
+/home/smr_admin/pmemkv/build/gtest/src/gtest-stamp/gtest-install.rule
+/home/smr_admin/pmemkv/build/gtest/src/gtest-stamp/gtest-mkdir.rule
+/home/smr_admin/pmemkv/build/gtest/src/gtest-stamp/gtest-download.rule
+/home/smr_admin/pmemkv/build/gtest/src/gtest-stamp/gtest-update.rule
+/home/smr_admin/pmemkv/build/gtest/src/gtest-stamp/gtest-patch.rule
+/home/smr_admin/pmemkv/build/gtest/src/gtest-stamp/gtest-configure.rule
+/home/smr_admin/pmemkv/build/gtest/src/gtest-stamp/gtest-build.rule
