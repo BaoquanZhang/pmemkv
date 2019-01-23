@@ -38,6 +38,7 @@ set(SOURCE_FILES src/pmemkv.cc src/pmemkv.h
     src/engines/kvtree2.h src/engines/kvtree2.cc
     src/engines/versioned_b_tree.h src/engines/versioned_b_tree.cc
     src/engines/versioned_b_tree/persistent_b_tree.h src/engines/versioned_b_tree/pstring.h
+    src/engines/lsm_kvtree.h src/engines/lsm_kvtree.cc
     src/engines/nvlsm.h src/engines/nvlsm.cc
     src/engines/nvlsm2.h src/engines/nvlsm2.cc
     src/engines/nvlsm/cond_var.h src/engines/nvlsm/cond_var.cc
