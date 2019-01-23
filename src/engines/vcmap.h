@@ -30,54 +30,43 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <iostream>
-#include "blackhole.h"
+#pragma once
 
-#define DO_LOG 0
-#define LOG(msg) if (DO_LOG) std::cout << "[blackhole] " << msg << "\n"
+#include "../pmemkv.h"
+#include "pmem_allocator.h"
+#include <string>
+#include <scoped_allocator>
+#include <tbb/concurrent_hash_map.h>
 
 namespace pmemkv {
-namespace blackhole {
+namespace vcmap {
 
-Blackhole::Blackhole() {
-    LOG("Started ok");
-}
+const string ENGINE = "vcmap";
 
-Blackhole::~Blackhole() {
-    LOG("Stopped ok");
-}
+class VCMap : public KVEngine {
+  public:
+    VCMap(const string& path, size_t size);
+    ~VCMap();
+    string Engine() final { return ENGINE; }
+    using KVEngine::All;
+    void All(void* context, KVAllCallback* callback) final;
+    int64_t Count() final;
+    using KVEngine::Each;
+    void Each(void* context, KVEachCallback* callback) final;
+    KVStatus Exists(const string& key) final;
+    using KVEngine::Get;
+    void Get(void* context, const string& key, KVGetCallback* callback) final;
+    KVStatus Put(const string& key, const string& value) final;
+    KVStatus Remove(const string& key) final;
+  private:
+    typedef pmem::allocator<char> ch_allocator_t;
+    typedef std::basic_string<char, std::char_traits<char>, ch_allocator_t> pmem_string;
+    typedef pmem::allocator<std::pair<pmem_string, pmem_string> > kv_allocator_t;
+    typedef tbb::concurrent_hash_map <pmem_string, pmem_string, tbb::tbb_hash_compare<pmem_string>, std::scoped_allocator_adaptor<kv_allocator_t>> map_t;
+    kv_allocator_t kv_allocator;
+    ch_allocator_t ch_allocator;
+    map_t pmem_kv_container;
+};
 
-void Blackhole::All(void* context, KVAllCallback* callback) {
-    LOG("All");
-}
-
-int64_t Blackhole::Count() {
-    LOG("Count");
-    return 0;
-}
-
-void Blackhole::Each(void* context, KVEachCallback* callback) {
-    LOG("Each");
-}
-
-KVStatus Blackhole::Exists(const string& key) {
-    LOG("Exists for key=" << key);
-    return NOT_FOUND;
-}
-
-void Blackhole::Get(void* context, const string& key, KVGetCallback* callback) {
-    LOG("Get key=" << key);
-}
-
-KVStatus Blackhole::Put(const string& key, const string& value) {
-    LOG("Put key=" << key << ", value.size=" << to_string(value.size()));
-    return OK;
-}
-
-KVStatus Blackhole::Remove(const string& key) {
-    LOG("Remove key=" << key);
-    return OK;
-}
-
-} // namespace blackhole
+} // namespace vcmap
 } // namespace pmemkv

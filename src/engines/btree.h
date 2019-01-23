@@ -33,50 +33,46 @@
 #pragma once
 
 #include "../pmemkv.h"
-#include "versioned_b_tree/persistent_b_tree.h"
-#include "versioned_b_tree/pstring.h"
+#include "btree/persistent_b_tree.h"
+#include "btree/pstring.h"
 
 using pmem::obj::pool;
 using pmem::obj::persistent_ptr;
 
 namespace pmemkv {
-namespace versioned_b_tree {
+namespace btree {
 
-const string ENGINE = "btree";                         // engine identifier
+const string ENGINE = "btree";
 const size_t DEGREE = 64;
 const size_t MAX_KEY_SIZE = 20;
 const size_t MAX_VALUE_SIZE = 200;
 
-class BTreeEngine : public KVEngine {
+class BTree : public KVEngine {
+  public:
+    BTree(const string& path, size_t size);
+    ~BTree();
+    string Engine() final { return ENGINE; }
+    using KVEngine::All;
+    void All(void* context, KVAllCallback* callback) final;
+    int64_t Count() final;
+    using KVEngine::Each;
+    void Each(void* context, KVEachCallback* callback) final;
+    KVStatus Exists(const string& key) final;
+    using KVEngine::Get;
+    void Get(void* context, const string& key, KVGetCallback* callback) final;
+    KVStatus Put(const string& key, const string& value) final;
+    KVStatus Remove(const string& key) final;
   private:
-    typedef persistent::b_tree<pstring<MAX_KEY_SIZE>, pstring<MAX_VALUE_SIZE> , DEGREE> btree_type;
+    typedef persistent::b_tree<pstring<MAX_KEY_SIZE>, pstring<MAX_VALUE_SIZE>, DEGREE> btree_type;
     struct RootData {
         persistent_ptr<btree_type> btree_ptr;
-    };    
-
-    BTreeEngine(const BTreeEngine&);
-    void operator=(const BTreeEngine&);
-  public:
-    BTreeEngine(const string& path, size_t size);               // default constructor
-    ~BTreeEngine();                                             // default destructor
-
-    string Engine() final { return ENGINE; }                    // engine identifier
-    KVStatus Get(int32_t limit,                                 // copy value to fixed-size buffer
-                 int32_t keybytes,
-                 int32_t* valuebytes,
-                 const char* key,
-                 char* value) final;
-    KVStatus Get(const string& key,                             // append value to std::string
-                 string* value) final;
-    KVStatus Put(const string& key,                             // copy value from std::string
-                 const string& value) final;
-    KVStatus Remove(const string& key) final;                   // remove value for key
-  private:
+    };
+    BTree(const BTree&);
+    void operator=(const BTree&);
     void Recover();
-
-    pool<RootData> pmpool;                                      // pool for persistent root
+    pool<RootData> pmpool;
     btree_type* my_btree;
 };
 
-} // namespace versioned_b_tree
+} // namespace btree
 } // namespace pmemkv

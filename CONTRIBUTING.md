@@ -22,7 +22,7 @@ Code Style
 
 * Start with [Google C++ Style](https://google.github.io/styleguide/cppguide.html)
 * Indent 4 spaces, 8 spaces for continuation
-* Max 100 chars per line
+* Max 120 chars per line
 * Space after '*' and '&' (rather than before)
 
 <a name="pull_requests"></a>
@@ -128,12 +128,11 @@ Next we'll walk you through the steps of creating a new engine.
 
 * In `src/pmemkv.cc`:
     * Add `#include "engines/mytree.h"`
-    * Update `KVEngine::Open` to return new `MyTree` instances
-    * Update `KVEngine::Close` to delete `MyTree` instances
-* Engine should now work with `pmemkv_bench` and high-level bindings
+    * Update `KVEngine::Start` to return new `MyTree` instances
+    * Update `KVEngine::Stop` to delete `MyTree` instances
+* `make` & verify engine now works with high-level bindings
 
 ### Documentation
 
 * In `ENGINES.md`, add `mytree` section
 * In `README.md`, link `mytree` in the table of supported engines
-* Submit blog post on pmem.io
