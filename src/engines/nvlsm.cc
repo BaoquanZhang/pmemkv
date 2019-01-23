@@ -261,9 +261,9 @@ void NVLsm::compact(int comp_index) {
         /* merge sort the runs */
         merge_sort(unit);
         /* delete the old meta data */
-        LOG("deleting old meta data");
-        meta_log->append("delete old meta data");
-        meta_log.persist();
+        //LOG("deleting old meta data");
+        //meta_log->append("delete old meta data");
+        //meta_log.persist();
         if (!(meta_table[comp_index].del(unit->up_run))) {
             cout << "delete meta " << comp_index << " error! " << endl; 
             unit->display();
@@ -274,17 +274,17 @@ void NVLsm::compact(int comp_index) {
             unit->display();
             exit(1);
         }
-        LOG("adding new meta data");
-        meta_log->append("add new metadata");
-        meta_log.persist();
+        //LOG("adding new meta data");
+        //meta_log->append("add new metadata");
+        //meta_log.persist();
         if (!(meta_table[comp_index + 1].add(unit->new_runs))) {
             cout << "add meta in C " << comp_index + 1 << " error! " << endl; 
             unit->display();
             exit(1);
         }
-        meta_log->append("commit compaction");
-        meta_log.persist();
-        LOG("deleting old data");
+        //meta_log->append("commit compaction");
+        //meta_log.persist();
+        //LOG("deleting old data");
         delete unit;
         compact(comp_index + 1);
     }

@@ -1,0 +1,1 @@
+sudo PMEM_IS_PMEM_FORCE=1 perf stat -e cache-misses,cache-references,L1-dcache-load-misses,L1-dcache-loads,L1-dcache-stores,LLC-load-misses,LLC-loads,LLC-store-misses,LLC-stores /home/smr_admin/pmemkv/bin/pmemkv_bench --histogram=1 --db=/mnt/pmem/nvlsm/pmemkv.pool --engine=nvlsm --value_size=128 --db_size_in_gb=30 --benchmarks=fillrandom --num=100000000
