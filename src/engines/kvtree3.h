@@ -46,9 +46,9 @@ using pmem::obj::delete_persistent;
 using pmem::obj::pool;
 
 namespace pmemkv {
-namespace kvtree2 {
+namespace kvtree3 {
 
-const string ENGINE = "kvtree2";                           // engine identifier
+const string ENGINE = "kvtree3";                           // engine identifier
 
 #define INNER_KEYS 4                                       // maximum keys for inner nodes
 #define INNER_KEYS_MIDPOINT (INNER_KEYS / 2)               // halfway point within the node
@@ -58,19 +58,18 @@ const string ENGINE = "kvtree2";                           // engine identifier
 
 class KVSlot {
   public:
-    uint8_t hash() const { return get_ph(); }                    // Pearson hash for key
-    uint8_t hash_direct(char *p) const { return *((uint8_t *)(p + sizeof(uint32_t) + sizeof(uint32_t))); }                    // Pearson hash for key
-    const char* key() const { return ((char *)(kv.get()) + sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t)); }           // key as C-style string
-    const char* key_direct(char *p) const { return (p + sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t)); }           // key as C-style string
-    const uint32_t keysize() const { return get_ks(); }          // size of key (without null)
-    const uint32_t keysize_direct(char *p) const { return *((uint32_t *)(p)); }          // size of key (without null)
-    const char* val() const { return ((char *)(kv.get()) + sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t) + get_ks() + 1); }  // pointer to binary-safe value
-    const char* val_direct(char *p) const { return (p + sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t) + *((uint32_t *)(p)) + 1); }  // pointer to binary-safe value
-    const uint32_t valsize() const { return get_vs(); }          // size of length (without null)
-    const uint32_t valsize_direct(char *p) const { return *((uint32_t *)(p + sizeof(uint32_t))); }          // size of length (without null)
-    void clear();                                          // frees persistent memory
-    void set(const uint8_t hash, const string& key,        // sets all slot fields
-             const string& value);
+    uint8_t hash() const { return get_ph(); }
+    uint8_t hash_direct(char *p) const { return *((uint8_t *)(p + sizeof(uint32_t) + sizeof(uint32_t))); }
+    const char* key() const { return ((char *)(kv.get()) + sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t)); }
+    const char* key_direct(char *p) const { return (p + sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t)); }
+    const uint32_t keysize() const { return get_ks(); }
+    const uint32_t keysize_direct(char *p) const { return *((uint32_t *)(p)); }
+    const char* val() const { return ((char *)(kv.get()) + sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t) + get_ks() + 1); }
+    const char* val_direct(char *p) const { return (p + sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t) + *((uint32_t *)(p)) + 1); }
+    const uint32_t valsize() const { return get_vs(); }
+    const uint32_t valsize_direct(char *p) const { return *((uint32_t *)(p + sizeof(uint32_t))); }
+    void clear();
+    void set(const uint8_t hash, const string& key, const string& value);
     void set_ph(uint8_t v) {*((uint8_t *)((char *)(kv.get()) + sizeof(uint32_t) + sizeof(uint32_t))) = v;}
     void set_ph_direct(char *p, uint8_t v) {*((uint8_t *)(p + sizeof(uint32_t) + sizeof(uint32_t))) = v;}
     void set_ks(uint32_t v) {*((uint32_t *)(kv.get())) = v;}
@@ -85,9 +84,6 @@ class KVSlot {
     uint32_t get_vs_direct(char *p) const {return *((uint32_t *)((char *)(p) + sizeof(uint32_t)));}
     bool empty();
   private:
-    //uint8_t ph;                                            // Pearson hash for key
-    //uint32_t ks;                                           // key size
-    //uint32_t vs;                                           // value size
     persistent_ptr<char[]> kv;                             // buffer for key & value
 };
 
@@ -123,67 +119,39 @@ struct KVLeafNode final : KVNode {                         // volatile leaf node
 
 struct KVRecoveredLeaf {                                   // temporary wrapper used for recovery
     unique_ptr<KVLeafNode> leafnode;                       // leaf node being recovered
-    char* max_key;                                         // highest sorting key present
-};
-
-struct KVTreeAnalysis {                                    // tree analysis structure
-    size_t leaf_empty;                                     // count of persisted leaves w/o keys
-    size_t leaf_prealloc;                                  // count of persisted but unused leaves
-    size_t leaf_total;                                     // count of all persisted leaves
-    string path;                                           // path when constructed
-    size_t size;                                           // actual size of persistent pool
+    string max_key;                                        // highest sorting key present
 };
 
 class KVTree : public KVEngine {                           // hybrid B+ tree engine
   public:
-    KVTree(const string& path, size_t size);               // default constructor
-    ~KVTree();                                             // default destructor
-
-    string Engine() final { return ENGINE; }               // engine identifier
-    KVStatus Get(int32_t limit,                            // copy value to fixed-size buffer
-                 int32_t keybytes,
-                 int32_t* valuebytes,
-                 const char* key,
-                 char* value) final;
-    KVStatus Get(const string& key,                        // append value to std::string
-                 string* value) final;
-    KVStatus Put(const string& key,                        // copy value from std::string
-                 const string& value) final;
-    KVStatus Remove(const string& key) final;              // remove value for key
-
-    void Analyze(KVTreeAnalysis& analysis);                // report on internal state & stats
+    KVTree(const string& path, size_t size);
+    ~KVTree();
+    string Engine() final { return ENGINE; }
+    using KVEngine::All;
+    void All(void* context, KVAllCallback* callback) final;
+    int64_t Count() final;
+    using KVEngine::Each;
+    void Each(void* context, KVEachCallback* callback) final;
+    KVStatus Exists(const string& key) final;
+    using KVEngine::Get;
+    void Get(void* context, const string& key, KVGetCallback* callback) final;
+    KVStatus Put(const string& key, const string& value) final;
+    KVStatus Remove(const string& key) final;
   protected:
-    KVLeafNode* LeafSearch(const string& key);             // find node for key
-    void LeafFillEmptySlot(KVLeafNode* leafnode,           // write first unoccupied slot found
-                           uint8_t hash,
-                           const string& key,
-                           const string& value);
-    bool LeafFillSlotForKey(KVLeafNode* leafnode,          // write slot for matching key if found
-                            uint8_t hash,
-                            const string& key,
-                            const string& value);
-    void LeafFillSpecificSlot(KVLeafNode* leafnode,        // write slot at specific index
-                              uint8_t hash,
-                              const string& key,
-                              const string& value,
-                              int slot);
-    void LeafSplitFull(KVLeafNode* leafnode,               // split full leaf into two leaves
-                       uint8_t hash,
-                       const string& key,
-                       const string& value);
-    void InnerUpdateAfterSplit(KVNode* node,               // update parents after leaf split
-                               unique_ptr<KVNode> newnode,
-                               string* split_key);
-    uint8_t PearsonHash(const char* data,                  // calculate 1-byte hash for string
-                        size_t size);
-    void Recover();                                        // reload state from persistent pool
+    KVLeafNode* LeafSearch(const string& key);
+    void LeafFillEmptySlot(KVLeafNode* leafnode, uint8_t hash, const string& key, const string& value);
+    bool LeafFillSlotForKey(KVLeafNode* leafnode, uint8_t hash, const string& key, const string& value);
+    void LeafFillSpecificSlot(KVLeafNode* leafnode, uint8_t hash, const string& key, const string& value, int slot);
+    void LeafSplitFull(KVLeafNode* leafnode, uint8_t hash, const string& key, const string& value);
+    void InnerUpdateAfterSplit(KVNode* node, unique_ptr<KVNode> newnode, string* split_key);
+    uint8_t PearsonHash(const char* data, size_t size);
+    void Recover();
   private:
     KVTree(const KVTree&);                                 // prevent copying
     void operator=(const KVTree&);                         // prevent assigning
     vector<persistent_ptr<KVLeaf>> leaves_prealloc;        // persisted but unused leaves
     const string pmpath;                                   // path when constructed
     pool<KVRoot> pmpool;                                   // pool for persistent root
-    size_t pmsize;                                         // actual size of persistent pool
     unique_ptr<KVNode> tree_top;                           // pointer to uppermost inner node
 };
 

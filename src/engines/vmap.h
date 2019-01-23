@@ -30,44 +30,43 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <iostream>
-#include "pmemkv.h"
+#pragma once
 
-#define LOG(msg) std::cout << msg << "\n"
+#include "../pmemkv.h"
+#include "pmem_allocator.h"
+#include <map>
+#include <string>
+#include <scoped_allocator>
 
-using namespace pmemkv;
+namespace pmemkv {
+namespace vmap {
 
-int main() {
-    LOG("Opening datastore");
-    KVEngine* kv = KVEngine::Open("kvtree", "/dev/shm/pmemkv", PMEMOBJ_MIN_POOL);
+const string ENGINE = "vmap";
 
-    LOG("Putting new value");
-    KVStatus s = kv->Put("key1", "value1");
-    assert(s == OK);
-    string value;
-    s = kv->Get("key1", &value);
-    assert(s == OK && value == "value1");
+class VMap : public KVEngine {
+  public:
+    VMap(const string& path, size_t size);
+    ~VMap();
+    string Engine() final { return ENGINE; }
+    using KVEngine::All;
+    void All(void* context, KVAllCallback* callback) final;
+    int64_t Count() final;
+    using KVEngine::Each;
+    void Each(void* context, KVEachCallback* callback) final;
+    KVStatus Exists(const string& key) final;
+    using KVEngine::Get;
+    void Get(void* context, const string& key, KVGetCallback* callback) final;
+    KVStatus Put(const string& key, const string& value) final;
+    KVStatus Remove(const string& key) final;
+  private:
+    typedef pmem::allocator<char> ch_allocator_t;
+    typedef std::basic_string<char, std::char_traits<char>, ch_allocator_t> pmem_string;
+    typedef pmem::allocator<std::pair<pmem_string, pmem_string> > kv_allocator_t;
+    typedef std::map<pmem_string, pmem_string, std::less<pmem_string>, std::scoped_allocator_adaptor<kv_allocator_t>> map_t;
+    kv_allocator_t kv_allocator;
+    ch_allocator_t ch_allocator;
+    map_t pmem_kv_container;
+};
 
-    LOG("Replacing existing value");
-    string value2;
-    s = kv->Get("key1", &value2);
-    assert(s == OK && value2 == "value1");
-    s = kv->Put("key1", "value_replaced");
-    assert(s == OK);
-    string value3;
-    s = kv->Get("key1", &value3);
-    assert(s == OK && value3 == "value_replaced");
-
-    LOG("Removing existing value");
-    s = kv->Remove("key1");
-    assert(s == OK);
-    string value4;
-    s = kv->Get("key1", &value4);
-    assert(s == NOT_FOUND);
-
-    LOG("Closing datastore");
-    delete kv;
-
-    LOG("Finished successfully");
-    return 0;
-}
+} // namespace vmap
+} // namespace pmemkv

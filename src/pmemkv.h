@@ -32,11 +32,18 @@
 
 #pragma once
 
-typedef enum {                                             // status enumeration
-    FAILED = -1,                                           // operation failed
-    NOT_FOUND = 0,                                         // key not located
-    OK = 1                                                 // successful completion
+typedef enum {
+    FAILED = -1,
+    NOT_FOUND = 0,
+    OK = 1
 } KVStatus;
+
+typedef void(KVAllCallback)(void* context, int keybytes, const char* key);
+typedef void(KVAllFunction)(int keybytes, const char* key);
+typedef void(KVEachCallback)(void* context, int keybytes, const char* key, int valuebytes, const char* value);
+typedef void(KVEachFunction)(int keybytes, const char* key, int valuebytes, const char* value);
+typedef void(KVGetCallback)(void* context, int valuebytes, const char* value);
+typedef void(KVStartFailureCallback)(void* context, const char* engine, const char* config, const char* msg);
 
 #ifdef __cplusplus
 
@@ -46,43 +53,42 @@ typedef enum {                                             // status enumeration
 #include <libpmemobj++/persistent_ptr.hpp>
 #include <libpmemobj++/pool.hpp>
 #include <libpmemobj++/transaction.hpp>
+#include "rapidjson/document.h"
 
 using std::string;
 using std::to_string;
 
 namespace pmemkv {
 
-const string LAYOUT = "pmemkv";                            // pool layout identifier
+const string LAYOUT = "pmemkv";
 
-class KVEngine {                                           // storage engine implementations
+class KVEngine {
   public:
-    static KVEngine* Open(const string& engine,            // open storage engine
-                          const string& path,              // path to persistent pool
-                          size_t size);                    // size used when creating pool
-    static void Close(KVEngine* kv);                       // close storage engine
+    static KVEngine* Start(const string& engine, const string& config);
+    static KVEngine* Start(void* context, const char* engine, const char* config, KVStartFailureCallback* callback);
+    static void Stop(KVEngine* kv);
 
-    virtual string Engine() = 0;                           // engine identifier
-    virtual KVStatus Get(int32_t limit,                    // copy value to fixed-size buffer
-                         int32_t keybytes,
-                         int32_t* valuebytes,
-                         const char* key,
-                         char* value) = 0;
-    virtual KVStatus Get(const string& key,                // append value to std::string
-                         string* value) = 0;
-    virtual KVStatus Put(const string& key,                // copy value from std::string
-                         const string& value) = 0;
-    virtual KVStatus Remove(const string& key) = 0;        // remove value for key
-};
+    virtual string Engine() = 0;
 
-#pragma pack(push, 1)
-struct FFIBuffer {                                         // FFI buffer providing all params
-    KVEngine* kv;
-    int32_t limit;
-    int32_t keybytes;
-    int32_t valuebytes;
-    char data[];
+    virtual void All(void* context, KVAllCallback* callback) = 0;
+    inline void All(KVAllCallback* callback) { All(nullptr, callback); }
+    void All(std::function<KVAllFunction> f);
+
+    virtual int64_t Count() = 0;
+
+    virtual void Each(void* context, KVEachCallback* callback) = 0;
+    inline void Each(KVEachCallback* callback) { Each(nullptr, callback); }
+    void Each(std::function<KVEachFunction> f);
+
+    virtual KVStatus Exists(const string& key) = 0;
+
+    virtual void Get(void* context, const string& key, KVGetCallback* callback) = 0;
+    inline void Get(const string& key, KVGetCallback* callback) { Get(nullptr, key, callback); }
+    KVStatus Get(const string& key, string* value);
+
+    virtual KVStatus Put(const string& key, const string& value) = 0;
+    virtual KVStatus Remove(const string& key) = 0;
 };
-#pragma pack(pop)
 
 extern "C" {
 #endif
@@ -90,37 +96,19 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 
-struct KVEngine;                                           // define types as simple structs
+struct KVEngine;
 typedef struct KVEngine KVEngine;
-struct FFIBuffer;
-typedef struct FFIBuffer FFIBuffer;
 
-KVEngine* kvengine_open(const char* engine,                // open storage engine
-                        const char* path,
-                        size_t size);
-
-void kvengine_close(KVEngine* kv);                         // close storage engine
-
-int8_t kvengine_get(KVEngine* kv,                          // copy value to fixed-size buffer
-                    int32_t limit,
-                    int32_t keybytes,
-                    int32_t* valuebytes,
-                    const char* key,
-                    char* value);
-
-int8_t kvengine_put(KVEngine* kv,                          // copy value from fixed-size buffer
-                    int32_t keybytes,
-                    int32_t* valuebytes,
-                    const char* key,
-                    const char* value);
-
-int8_t kvengine_remove(KVEngine* kv,                       // remove value for key
-                       int32_t keybytes,
-                       const char* key);
-
-int8_t kvengine_get_ffi(FFIBuffer* buf);                   // FFI optimized methods
-int8_t kvengine_put_ffi(const FFIBuffer* buf);
-int8_t kvengine_remove_ffi(const FFIBuffer* buf);
+KVEngine* kvengine_start(void* context, const char* engine, const char* config, KVStartFailureCallback* callback);
+void kvengine_stop(KVEngine* kv);
+void kvengine_all(KVEngine* kv, void* context, KVAllCallback* callback);
+int64_t kvengine_count(KVEngine* kv);
+void kvengine_each(KVEngine* kv, void* context, KVEachCallback* callback);
+int8_t kvengine_exists(KVEngine* kv, int32_t keybytes, const char* key);
+void kvengine_get(KVEngine* kv, void* context, int32_t keybytes, const char* key, KVGetCallback* callback);
+int8_t kvengine_get_copy(KVEngine* kv, int32_t keybytes, const char* key, int32_t maxvaluebytes, char* value);
+int8_t kvengine_put(KVEngine* kv, int32_t keybytes, const char* key, int32_t valuebytes, const char* value);
+int8_t kvengine_remove(KVEngine* kv, int32_t keybytes, const char* key);
 
 #ifdef __cplusplus
 }

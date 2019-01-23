@@ -36,13 +36,13 @@
 #include <iostream>
 #include <list>
 #include <unistd.h>
-#include "kvtree2.h"
+#include "lsm_kvtree.h"
 
 #define DO_LOG 0
 #define LOG(msg) if (DO_LOG) std::cout << "[kvtree] " << msg << "\n"
 
 namespace pmemkv {
-namespace kvtree2 {
+namespace lsm_kvtree {
 
 KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
     if (path.find("/dev/dax") == 0) {

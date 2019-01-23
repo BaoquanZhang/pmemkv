@@ -28,16 +28,19 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-cmake_minimum_required(VERSION 3.6)
+cmake_minimum_required(VERSION 3.5)
 project(pmemkv)
 
 set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR}/cmake)
 set(SOURCE_FILES src/pmemkv.cc src/pmemkv.h
     src/engines/blackhole.h src/engines/blackhole.cc
-    src/engines/kvtree.h src/engines/kvtree.cc
-    src/engines/kvtree2.h src/engines/kvtree2.cc
-    src/engines/versioned_b_tree.h src/engines/versioned_b_tree.cc
-    src/engines/versioned_b_tree/persistent_b_tree.h src/engines/versioned_b_tree/pstring.h
+    src/engines/kvtree3.h src/engines/kvtree3.cc
+    src/engines/btree.h src/engines/btree.cc
+    src/engines/btree/persistent_b_tree.h src/engines/btree/pstring.h
+	src/engines/vmap.h src/engines/vmap.cc
+	src/engines/vcmap.h src/engines/vcmap.cc
+    src/engines/lsm_kvtree.h src/engines/lsm_kvtree.cc
     src/engines/nvlsm.h src/engines/nvlsm.cc
     src/engines/nvlsm2.h src/engines/nvlsm2.cc
     src/engines/nvlsm/cond_var.h src/engines/nvlsm/cond_var.cc
@@ -45,12 +48,28 @@ set(SOURCE_FILES src/pmemkv.cc src/pmemkv.h
     src/engines/nvlsm/task.h src/engines/nvlsm/task.cc
     src/engines/nvlsm/threadpool.h src/engines/nvlsm/threadpool.cc
 )
+set(TEST_FILES tests/pmemkv_test.cc tests/mock_tx_alloc.cc
+	tests/engines/blackhole_test.cc
+	tests/engines/btree_test.cc
+	tests/engines/kvtree_test.cc
+	tests/engines/vmap_test.cc
+	tests/engines/vcmap_test.cc
+)
 set(3RDPARTY ${PROJECT_SOURCE_DIR}/3rdparty)
 set(GTEST_VERSION 1.7.0)
 
 find_package(PkgConfig QUIET)
 include(ExternalProject)
 include(FindThreads)
+include(FindMemkind)
+include(TBBGet)
+
+if(NOT MEMKIND_FOUND)
+	message(FATAL_ERROR "Memkind library not found")
+endif()
+
+tbb_get(TBB_ROOT tbb_root CONFIG_DIR TBB_DIR)
+find_package(TBB REQUIRED COMPONENTS tbb)
 
 set(GTEST_URL ${CMAKE_SOURCE_DIR}/googletest-${GTEST_VERSION}.zip)
 if(EXISTS ${GTEST_URL})
@@ -79,40 +98,13 @@ else()
     find_package(PMEMOBJ++ REQUIRED)
 endif()
 
-include_directories(${PMEMOBJ++_INCLUDE_DIRS})
+find_package(RapidJSON)
+
+include_directories(${PMEMOBJ++_INCLUDE_DIRS} ${MEMKIND_INCLUDE_DIRS})
 link_directories(${PMEMOBJ++_LIBRARY_DIRS})
 
 add_library(pmemkv SHARED ${SOURCE_FILES})
-target_link_libraries(pmemkv ${PMEMOBJ++_LIBRARIES})
+target_link_libraries(pmemkv ${PMEMOBJ++_LIBRARIES} ${MEMKIND_LIBRARIES} ${TBB_IMPORTED_TARGETS})
 
-add_executable(pmemkv_example src/pmemkv_example.cc)
-target_link_libraries(pmemkv_example pmemkv)
-
-add_executable(pmemkv_test tests/pmemkv_test.cc tests/mock_tx_alloc.cc
-               tests/engines/blackhole_test.cc
-               tests/engines/kvtree_test.cc
-               tests/engines/versioned_b_tree_test.cc
-               tests/engines/nvlsm_test.cc #add for nvlsm
-)
+add_executable(pmemkv_test ${TEST_FILES})
 target_link_libraries(pmemkv_test pmemkv libgtest ${CMAKE_DL_LIBS})
-
-include_directories(leveldb leveldb/include leveldb/port leveldb/util)
-add_executable(pmemkv_bench
-    src/pmemkv_bench.cc
-    leveldb/include/leveldb/env.h
-    leveldb/include/leveldb/slice.h
-    leveldb/include/leveldb/status.h
-    leveldb/port/atomic_pointer.h
-    leveldb/port/port_posix.h leveldb/port/port_posix.cc
-    leveldb/port/thread_annotations.h
-    leveldb/util/env.cc
-    leveldb/util/env_posix.cc
-    leveldb/util/env_posix_test_helper.h
-    leveldb/util/histogram.h leveldb/util/histogram.cc
-    leveldb/util/logging.h leveldb/util/logging.cc
-    leveldb/util/mutexlock.h
-    leveldb/util/posix_logger.h
-    leveldb/util/random.h
-    leveldb/util/status.cc
-)
-target_link_libraries(pmemkv_bench pmemkv pthread)

@@ -36,131 +36,127 @@
 #include <iostream>
 #include <list>
 #include <unistd.h>
-#include "kvtree.h"
+#include "kvtree3.h"
 
 #define DO_LOG 0
-#define LOG(msg) if (DO_LOG) std::cout << "[kvtree] " << msg << "\n"
+#define LOG(msg) if (DO_LOG) std::cout << "[kvtree3] " << msg << "\n"
 
 namespace pmemkv {
-namespace kvtree {
+namespace kvtree3 {
 
 KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
-    if (path.find("/dev/dax") == 0) {
-        LOG("Opening device dax pool, path=" << path);
-        pmpool = pool<KVRoot>::open(path.c_str(), LAYOUT);
-        pmsize = 0;
-    } else if (access(path.c_str(), F_OK) != 0) {
+    if ((access(path.c_str(), F_OK) != 0) && (size > 0)) {
         LOG("Creating filesystem pool, path=" << path << ", size=" << to_string(size));
         pmpool = pool<KVRoot>::create(path.c_str(), LAYOUT, size, S_IRWXU);
-        pmsize = size;
     } else {
-        LOG("Opening filesystem pool, path=" << path);
+        LOG("Opening pool, path=" << path);
         pmpool = pool<KVRoot>::open(path.c_str(), LAYOUT);
-        struct stat st;
-        stat(path.c_str(), &st);
-        pmsize = (size_t) st.st_size;
     }
     Recover();
-    LOG("Opened ok");
+    LOG("Started ok");
 }
 
 KVTree::~KVTree() {
-    LOG("Closing");
+    LOG("Stopping");
     pmpool.close();
-    LOG("Closed ok");
+    LOG("Stopped ok");
 }
 
 // ===============================================================================================
 // KEY/VALUE METHODS
 // ===============================================================================================
 
-void KVTree::Analyze(KVTreeAnalysis& analysis) {
-    LOG("Analyzing");
-    analysis.leaf_empty = 0;
-    analysis.leaf_prealloc = leaves_prealloc.size();
-    analysis.leaf_total = 0;
-    analysis.path = pmpath;
-    analysis.size = pmsize;
-
-    // iterate persistent leaves for stats
-    auto leaf = pmpool.get_root()->head;
+void KVTree::All(void* context, KVAllCallback* callback) {
+    LOG("All");
+    auto leaf = pmpool.root()->head;
     while (leaf) {
-        bool empty = true;
         for (int slot = LEAF_KEYS; slot--;) {
-            if (leaf->slots[slot].get_ro().hash() != 0) {
-                empty = false;
-                break;
-            }
+            auto kvslot = leaf->slots[slot].get_ro();
+            if (kvslot.empty() || kvslot.hash() == 0) continue;
+            (*callback)(context, kvslot.get_ks(), kvslot.key());
         }
-        if (empty) analysis.leaf_empty++;
-        analysis.leaf_total++;
         leaf = leaf->next;  // advance to next linked leaf
     }
-    LOG("Analyzed ok");
 }
 
-KVStatus KVTree::Get(const int32_t limit, const int32_t keybytes, int32_t* valuebytes,
-                     const char* key, char* value) {
-    LOG("Get for key=" << key);
-    auto leafnode = LeafSearch(key);
-    if (leafnode) {
-        const uint8_t hash = PearsonHash(key, (size_t) keybytes);
+int64_t KVTree::Count() {
+    int64_t result = 0;
+    auto leaf = pmpool.root()->head;
+    while (leaf) {
         for (int slot = LEAF_KEYS; slot--;) {
-            if (leafnode->hashes[slot] == hash) {
-                if (strcmp(leafnode->keys[slot].c_str(), key) == 0) {
-                    auto kv = leafnode->leaf->slots[slot].get_ro();
-                    auto vs = kv.valsize();
-                    if (vs < limit - keybytes - 64) {
-                        LOG("   found value, slot=" << slot << ", size=" << to_string(vs));
-                        memcpy(value, kv.val(), vs);
-                        *valuebytes = vs;
-                        return OK;
-                    } else {
-                        return FAILED;
-                    }
-                }
-            }
+            auto kvslot = leaf->slots[slot].get_ro();
+            if (kvslot.empty() || kvslot.hash() == 0) continue;
+            result++;
         }
+        leaf = leaf->next;  // advance to next linked leaf
     }
-    LOG("   could not find key");
-    return NOT_FOUND;
+    return result;
 }
 
-KVStatus KVTree::Get(const string& key, string* value) {
-    LOG("Get for key=" << key.c_str());
+void KVTree::Each(void* context, KVEachCallback* callback) {
+    LOG("Each");
+    auto leaf = pmpool.root()->head;
+    while (leaf) {
+        for (int slot = LEAF_KEYS; slot--;) {
+            auto kvslot = leaf->slots[slot].get_ro();
+            if (kvslot.empty() || kvslot.hash() == 0) continue;
+            (*callback)(context, kvslot.get_ks(), kvslot.key(), kvslot.get_vs(), kvslot.val());
+        }
+        leaf = leaf->next;  // advance to next linked leaf
+    }
+}
+
+KVStatus KVTree::Exists(const string& key) {
+    LOG("Exists for key=" << key);
     auto leafnode = LeafSearch(key);
     if (leafnode) {
         const uint8_t hash = PearsonHash(key.c_str(), key.size());
         for (int slot = LEAF_KEYS; slot--;) {
             if (leafnode->hashes[slot] == hash) {
-                if (strcmp(leafnode->keys[slot].c_str(), key.c_str()) == 0) {
-                    auto kv = leafnode->leaf->slots[slot].get_ro();
-                    LOG("   found value, slot=" << slot << ", size=" << to_string(kv.valsize()));
-                    value->append(kv.val());
+                if (leafnode->keys[slot].compare(key) == 0)
                     return OK;
-                }
             }
         }
     }
     LOG("   could not find key");
     return NOT_FOUND;
+}
+
+void KVTree::Get(void* context, const string& key, KVGetCallback* callback) {
+    LOG("Get using callback for key=" << key);
+    auto leafnode = LeafSearch(key);
+    if (leafnode) {
+        const uint8_t hash = PearsonHash(key.c_str(), key.size());
+        for (int slot = LEAF_KEYS; slot--;) {
+            if (leafnode->hashes[slot] == hash) {
+                LOG("   found hash match, slot=" << slot);
+                if (leafnode->keys[slot].compare(key) == 0) {
+                    auto kv = leafnode->leaf->slots[slot].get_ro();
+                    LOG("   found value, slot=" << slot << ", size=" << to_string(kv.valsize()));
+                    (*callback)(context, kv.valsize(), kv.val());
+                    return;
+                }
+            }
+        }
+    }
+    LOG("   could not find key");
 }
 
 KVStatus KVTree::Put(const string& key, const string& value) {
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
     try {
-        const uint8_t hash = PearsonHash(key.c_str(), key.size());
+        const auto hash = PearsonHash(key.c_str(), key.size());
         auto leafnode = LeafSearch(key);
         if (!leafnode) {
             LOG("   adding head leaf");
             unique_ptr<KVLeafNode> new_node(new KVLeafNode());
             new_node->is_leaf = true;
-            transaction::exec_tx(pmpool, [&] {
+            transaction::run(pmpool, [&] {
                 if (!leaves_prealloc.empty()) {
                     new_node->leaf = leaves_prealloc.back();
                     leaves_prealloc.pop_back();
                 } else {
-                    auto root = pmpool.get_root();
+                    auto root = pmpool.root();
                     auto old_head = root->head;
                     auto new_leaf = make_persistent<KVLeaf>();
                     root->head = new_leaf;
@@ -176,9 +172,14 @@ KVStatus KVTree::Put(const string& key, const string& value) {
             LeafSplitFull(leafnode, hash, key, value);
         }
         return OK;
-    } catch (pmem::transaction_alloc_error) {
+    } catch (std::bad_alloc e) {
+        LOG("Put failed due to exception, " << e.what());
         return FAILED;
-    } catch (pmem::transaction_error) {
+    } catch (pmem::transaction_alloc_error e) {
+        LOG("Put failed due to pmem::transaction_alloc_error, " << e.what());
+        return FAILED;
+    } catch (pmem::transaction_error e) {
+        LOG("Put failed due to pmem::transaction_error, " << e.what());
         return FAILED;
     }
 }
@@ -188,24 +189,35 @@ KVStatus KVTree::Remove(const string& key) {
     auto leafnode = LeafSearch(key);
     if (!leafnode) {
         LOG("   head not present");
-        return OK;
+        return NOT_FOUND;
     }
-    const uint8_t hash = PearsonHash(key.c_str(), key.size());
-    for (int slot = LEAF_KEYS; slot--;) {
-        if (leafnode->hashes[slot] == hash) {
-            if (strcmp(leafnode->keys[slot].c_str(), key.c_str()) == 0) {
-                LOG("   freeing slot=" << slot);
-                leafnode->hashes[slot] = 0;
-                leafnode->keys[slot].clear();
-                auto leaf = leafnode->leaf;
-                transaction::exec_tx(pmpool, [&] {
-                    leaf->slots[slot].get_rw().clear();
-                });
-                break;  // no duplicate keys allowed
+    try {
+        const auto hash = PearsonHash(key.c_str(), key.size());
+        for (int slot = LEAF_KEYS; slot--;) {
+            if (leafnode->hashes[slot] == hash) {
+                if (leafnode->keys[slot].compare(key) == 0) {
+                    LOG("   freeing slot=" << slot);
+                    leafnode->hashes[slot] = 0;
+                    leafnode->keys[slot].clear();
+                    auto leaf = leafnode->leaf;
+                    transaction::run(pmpool, [&] {
+                        leaf->slots[slot].get_rw().clear();
+                    });
+                    return OK; // no duplicate keys allowed
+                }
             }
         }
+        return NOT_FOUND;
+    } catch (std::bad_alloc e) {
+        LOG("Put failed due to exception, " << e.what());
+        return FAILED;
+    } catch (pmem::transaction_alloc_error e) {
+        LOG("Put failed due to pmem::transaction_alloc_error, " << e.what());
+        return FAILED;
+    } catch (pmem::transaction_error e) {
+        LOG("Put failed due to pmem::transaction_error, " << e.what());
+        return FAILED;
     }
-    return OK;
 }
 
 // ===============================================================================================
@@ -225,7 +237,7 @@ KVLeafNode* KVTree::LeafSearch(const string& key) {
         const uint8_t keycount = inner->keycount;
         for (uint8_t idx = 0; idx < keycount; idx++) {
             node = inner->children[idx].get();
-            if (strcmp(key.c_str(), inner->keys[idx].c_str()) <= 0) {
+            if (key.compare(inner->keys[idx]) <= 0) {
                 matched = true;
                 break;
             }
@@ -255,7 +267,7 @@ bool KVTree::LeafFillSlotForKey(KVLeafNode* leafnode, const uint8_t hash,
         if (slot_hash == 0) {
             last_empty_slot = slot;
         } else if (slot_hash == hash) {
-            if (strcmp(leafnode->keys[slot].c_str(), key.c_str()) == 0) {
+            if (leafnode->keys[slot].compare(key) == 0) {
                 key_match_slot = slot;
                 break;  // no duplicate keys allowed
             }
@@ -266,7 +278,7 @@ bool KVTree::LeafFillSlotForKey(KVLeafNode* leafnode, const uint8_t hash,
     int slot = key_match_slot >= 0 ? key_match_slot : last_empty_slot;
     if (slot >= 0) {
         LOG("   filling slot=" << slot);
-        transaction::exec_tx(pmpool, [&] {
+        transaction::run(pmpool, [&] {
             LeafFillSpecificSlot(leafnode, hash, key, value, slot);
         });
     }
@@ -275,11 +287,9 @@ bool KVTree::LeafFillSlotForKey(KVLeafNode* leafnode, const uint8_t hash,
 
 void KVTree::LeafFillSpecificSlot(KVLeafNode* leafnode, const uint8_t hash,
                                   const string& key, const string& value, const int slot) {
-    if (leafnode->hashes[slot] == 0) {
-        leafnode->hashes[slot] = hash;
-        leafnode->keys[slot] = key;
-    }
     leafnode->leaf->slots[slot].get_rw().set(hash, key, value);
+    leafnode->hashes[slot] = hash;
+    leafnode->keys[slot] = key;
 }
 
 void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
@@ -288,7 +298,7 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
     keys[LEAF_KEYS] = key;
     for (int slot = LEAF_KEYS; slot--;) keys[slot] = leafnode->keys[slot];
     std::sort(std::begin(keys), std::end(keys), [](const string& lhs, const string& rhs) {
-        return (strcmp(lhs.c_str(), rhs.c_str()) < 0);
+        return lhs.compare(rhs) < 0;
     });
     string split_key = keys[LEAF_KEYS_MIDPOINT];
     LOG("   splitting leaf at key=" << split_key);
@@ -297,14 +307,14 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
     unique_ptr<KVLeafNode> new_leafnode(new KVLeafNode());
     new_leafnode->parent = leafnode->parent;
     new_leafnode->is_leaf = true;
-    transaction::exec_tx(pmpool, [&] {
+    transaction::run(pmpool, [&] {
         persistent_ptr<KVLeaf> new_leaf;
         if (!leaves_prealloc.empty()) {
             new_leaf = leaves_prealloc.back();
             new_leafnode->leaf = new_leaf;
             leaves_prealloc.pop_back();
         } else {
-            auto root = pmpool.get_root();
+            auto root = pmpool.root();
             auto old_head = root->head;
             new_leaf = make_persistent<KVLeaf>();
             root->head = new_leaf;
@@ -312,7 +322,7 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
             new_leafnode->leaf = new_leaf;
         }
         for (int slot = LEAF_KEYS; slot--;) {
-            if (strcmp(leafnode->keys[slot].c_str(), split_key.data()) > 0) {
+            if (leafnode->keys[slot].compare(split_key) > 0) {
                 new_leaf->slots[slot].swap(leafnode->leaf->slots[slot]);
                 new_leafnode->hashes[slot] = leafnode->hashes[slot];
                 new_leafnode->keys[slot] = leafnode->keys[slot];
@@ -320,7 +330,7 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
                 leafnode->keys[slot].clear();
             }
         }
-        auto target = strcmp(key.c_str(), split_key.data()) > 0 ? new_leafnode.get() : leafnode;
+        auto target = key.compare(split_key) > 0 ? new_leafnode.get() : leafnode;
         LeafFillEmptySlot(target, hash, key, value);
     });
 
@@ -398,25 +408,32 @@ void KVTree::Recover() {
 
     // traverse persistent leaves to build list of leaves to recover
     std::list<KVRecoveredLeaf> leaves;
-    auto leaf = pmpool.get_root()->head;
+    auto leaf = pmpool.root()->head;
     while (leaf) {
         unique_ptr<KVLeafNode> leafnode(new KVLeafNode());
         leafnode->leaf = leaf;
         leafnode->is_leaf = true;
 
         // find highest sorting key in leaf, while recovering all hashes
-        char* max_key = nullptr;
+        bool empty_leaf = true;
+        string max_key;
         for (int slot = LEAF_KEYS; slot--;) {
             auto kvslot = leaf->slots[slot].get_ro();
+            if (kvslot.empty()) continue;
             leafnode->hashes[slot] = kvslot.hash();
             if (leafnode->hashes[slot] == 0) continue;
             const char* key = kvslot.key();
-            if (max_key == nullptr || strcmp(max_key, key) < 0) max_key = (char*) key;
-            leafnode->keys[slot] = key;
+            if (empty_leaf) {
+                max_key = string(kvslot.key(), kvslot.get_ks());
+                empty_leaf = false;
+            } else if (max_key.compare(0, string::npos, kvslot.key(), kvslot.get_ks()) < 0) {
+                max_key = string(kvslot.key(), kvslot.get_ks());
+            }
+            leafnode->keys[slot] = string(key, kvslot.get_ks());
         }
 
         // use highest sorting key to decide how to recover the leaf
-        if (max_key == nullptr) {
+        if (empty_leaf) {
             leaves_prealloc.push_back(leaf);
         } else {
             leaves.push_back({move(leafnode), max_key});
@@ -427,7 +444,7 @@ void KVTree::Recover() {
 
     // sort recovered leaves in ascending key order
     leaves.sort([](const KVRecoveredLeaf& lhs, const KVRecoveredLeaf& rhs) {
-        return (strcmp(lhs.max_key, rhs.max_key) < 0);
+        return (lhs.max_key.compare(rhs.max_key) < 0);
     });
 
     // reconstruct top/inner nodes using adjacent pairs of recovered leaves
@@ -493,25 +510,45 @@ uint8_t KVTree::PearsonHash(const char* data, const size_t size) {
 // SLOT CLASS METHODS
 // ===============================================================================================
 
+bool KVSlot::empty() {
+    if (kv)
+        return false;
+    else
+        return true;
+}
+
 void KVSlot::clear() {
-    if (kv) delete_persistent<char[]>(kv, ks + vs + 2);                  // free buffer if present
-    ph = 0;                                                              // clear pearson hash
-    ks = 0;                                                              // clear key size
-    vs = 0;                                                              // clear value size
-    kv = nullptr;                                                        // clear buffer pointer
+    if (kv) {
+        char* p = kv.get();
+        set_ph_direct(p, 0);
+        set_ks_direct(p, 0);
+        set_vs_direct(p, 0);
+        delete_persistent<char[]>(kv, sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t) + get_ks_direct(p) +
+                                      get_vs_direct(p) + 2);
+        kv = nullptr;
+    }
 }
 
 void KVSlot::set(const uint8_t hash, const string& key, const string& value) {
-    if (kv) delete_persistent<char[]>(kv, ks + vs + 2);                  // free buffer if present
-    ph = hash;                                                           // copy hash into leaf
-    ks = (uint32_t) key.size();                                          // read key size
-    vs = (uint32_t) value.size();                                        // read value size
-    size_t size = ks + vs + 2;                                           // set total size
-    kv = make_persistent<char[]>(size);                                  // reserve buffer space
-    char* kvptr = kv.get();                                              // set ptr into buffer
-    memcpy(kvptr, key.data(), ks);                                       // copy key into buffer
-    kvptr += ks + 1;                                                     // advance ptr past key
-    memcpy(kvptr, value.data(), vs);                                     // copy value into buffer
+    if (kv) {
+        char* p = kv.get();
+        delete_persistent<char[]>(kv, sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t) + get_ks_direct(p) +
+                                      get_vs_direct(p) + 2);
+    }
+    size_t ksize;
+    size_t vsize;
+    ksize = key.size();
+    vsize = value.size();
+    size_t size = ksize + vsize + 2 + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint8_t);
+    kv = make_persistent<char[]>(size);
+    char* p = kv.get();
+    set_ph_direct(p, hash);
+    set_ks_direct(p, (uint32_t) ksize);
+    set_vs_direct(p, (uint32_t) vsize);
+    char* kvptr = p + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint8_t);
+    memcpy(kvptr, key.data(), ksize);                                       // copy key into buffer
+    kvptr += ksize + 1;                                                     // advance ptr past key
+    memcpy(kvptr, value.data(), vsize);                                     // copy value into buffer
 }
 
 // ===============================================================================================
