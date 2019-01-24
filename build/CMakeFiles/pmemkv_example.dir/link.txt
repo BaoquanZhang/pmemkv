@@ -1,0 +1,1 @@
+/usr/bin/c++     CMakeFiles/pmemkv_example.dir/src/pmemkv_example.cc.o  -o pmemkv_example  -L/usr/local/lib -Wl,-rpath,/home/smr_admin/pmemkv/build:/usr/local/lib libpmemkv.so -lpmemobj 

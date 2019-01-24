@@ -1,0 +1,59 @@
+Determining if the pthread_create exist failed with the following output:
+Change Dir: /home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/CMakeTmp
+
+Run Build Command:"/usr/bin/make" "cmTC_2b7fb/fast"
+make[3]: Entering directory '/home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/CMakeTmp'
+/usr/bin/make -f CMakeFiles/cmTC_2b7fb.dir/build.make CMakeFiles/cmTC_2b7fb.dir/build
+make[4]: Entering directory '/home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/CMakeTmp'
+Building C object CMakeFiles/cmTC_2b7fb.dir/CheckSymbolExists.c.o
+/usr/bin/cc    -o CMakeFiles/cmTC_2b7fb.dir/CheckSymbolExists.c.o   -c /home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/CMakeTmp/CheckSymbolExists.c
+Linking C executable cmTC_2b7fb
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_2b7fb.dir/link.txt --verbose=1
+/usr/bin/cc      -rdynamic CMakeFiles/cmTC_2b7fb.dir/CheckSymbolExists.c.o  -o cmTC_2b7fb 
+CMakeFiles/cmTC_2b7fb.dir/CheckSymbolExists.c.o: In function `main':
+CheckSymbolExists.c:(.text+0x1b): undefined reference to `pthread_create'
+collect2: error: ld returned 1 exit status
+CMakeFiles/cmTC_2b7fb.dir/build.make:97: recipe for target 'cmTC_2b7fb' failed
+make[4]: *** [cmTC_2b7fb] Error 1
+make[4]: Leaving directory '/home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/CMakeTmp'
+Makefile:126: recipe for target 'cmTC_2b7fb/fast' failed
+make[3]: *** [cmTC_2b7fb/fast] Error 2
+make[3]: Leaving directory '/home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/CMakeTmp'
+
+File /home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/CMakeTmp/CheckSymbolExists.c:
+/* */
+#include <pthread.h>
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef pthread_create
+  return ((int*)(&pthread_create))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+
+Determining if the function pthread_create exists in the pthreads failed with the following output:
+Change Dir: /home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/CMakeTmp
+
+Run Build Command:"/usr/bin/make" "cmTC_fca38/fast"
+make[3]: Entering directory '/home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/CMakeTmp'
+/usr/bin/make -f CMakeFiles/cmTC_fca38.dir/build.make CMakeFiles/cmTC_fca38.dir/build
+make[4]: Entering directory '/home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/CMakeTmp'
+Building C object CMakeFiles/cmTC_fca38.dir/CheckFunctionExists.c.o
+/usr/bin/cc   -DCHECK_FUNCTION_EXISTS=pthread_create   -o CMakeFiles/cmTC_fca38.dir/CheckFunctionExists.c.o   -c /usr/share/cmake-3.10/Modules/CheckFunctionExists.c
+Linking C executable cmTC_fca38
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_fca38.dir/link.txt --verbose=1
+/usr/bin/cc  -DCHECK_FUNCTION_EXISTS=pthread_create    -rdynamic CMakeFiles/cmTC_fca38.dir/CheckFunctionExists.c.o  -o cmTC_fca38 -lpthreads 
+/usr/bin/ld: cannot find -lpthreads
+collect2: error: ld returned 1 exit status
+CMakeFiles/cmTC_fca38.dir/build.make:97: recipe for target 'cmTC_fca38' failed
+make[4]: *** [cmTC_fca38] Error 1
+make[4]: Leaving directory '/home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/CMakeTmp'
+Makefile:126: recipe for target 'cmTC_fca38/fast' failed
+make[3]: *** [cmTC_fca38/fast] Error 2
+make[3]: Leaving directory '/home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/CMakeTmp'
+
+

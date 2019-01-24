@@ -1,0 +1,7 @@
+/home/smr_admin/pmemkv/build/CMakeFiles/pmemkv.dir
+/home/smr_admin/pmemkv/build/CMakeFiles/rebuild_cache.dir
+/home/smr_admin/pmemkv/build/CMakeFiles/gtest.dir
+/home/smr_admin/pmemkv/build/CMakeFiles/pmemkv_example.dir
+/home/smr_admin/pmemkv/build/CMakeFiles/edit_cache.dir
+/home/smr_admin/pmemkv/build/CMakeFiles/pmemkv_test.dir
+/home/smr_admin/pmemkv/build/CMakeFiles/pmemkv_bench.dir

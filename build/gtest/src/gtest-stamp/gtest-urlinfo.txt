@@ -1,0 +1,3 @@
+repository='external project URL'
+module='/home/smr_admin/pmemkv/googletest-1.7.0.zip'
+tag=''

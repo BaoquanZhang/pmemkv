@@ -1,0 +1,4 @@
+/home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/rebuild_cache.dir
+/home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/gtest.dir
+/home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/edit_cache.dir
+/home/smr_admin/pmemkv/build/gtest/src/gtest-build/CMakeFiles/gtest_main.dir
