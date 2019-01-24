@@ -127,7 +127,7 @@ NVLsm::NVLsm(const string& path, const size_t size) {
     layer_depth = LAYER_DEPTH;
     com_ratio = COM_RATIO;
     LOG("Creating kvtree with size ");
-    kvtree = new KVTree(path + '0', 8388608);
+    kvtree = new KVTree(path + '0', 1024 * 1024 * 1024);
     LOG("Creating kvtree done");
     // Create/Open pmem pool
     if (access(path.c_str(), F_OK) != 0) {

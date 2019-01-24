@@ -60,7 +60,7 @@ KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
         stat(path.c_str(), &st);
         pmsize = (size_t) st.st_size;
     }
-    //Recover();
+    Recover();
     LOG("Opened ok");
 }
 
