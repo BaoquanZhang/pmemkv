@@ -42,7 +42,7 @@
 #define LOG(msg) if (DO_LOG) std::cout << "[kvtree] " << msg << "\n"
 
 namespace pmemkv {
-namespace nvlsm {
+namespace lsm_tree {
 
 KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
     if (path.find("/dev/dax") == 0) {
@@ -64,10 +64,12 @@ KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
     LOG("Opened ok");
 }
 
+KVTree::KVTree(const string& path, const size_t size, pool<KVRoot> allpool) 
+    : pmpath(path), pmpool(allpool), pmsize(size) {
+    LOG("Opened ok");
+}
+
 KVTree::~KVTree() {
-    LOG("Closing");
-    pmpool.close();
-    LOG("Closed ok");
 }
 
 // ===============================================================================================
@@ -557,5 +559,5 @@ void KVInnerNode::assert_invariants() {
         assert(children[i] == nullptr);
 }
 
-} // namespace nvlsm
+} // namespace lsm_tree
 } // namespace pmemkv

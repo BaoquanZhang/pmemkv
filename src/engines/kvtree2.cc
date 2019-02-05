@@ -44,7 +44,7 @@
 namespace pmemkv {
 namespace kvtree2 {
 
-KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
+KVTree::KVTree(const string& path, const size_t size) : pmpath(path), inner_count(0) {
     if (path.find("/dev/dax") == 0) {
         LOG("Opening device dax pool, path=" << path);
         pmpool = pool<KVRoot>::open(path.c_str(), LAYOUT);
@@ -66,6 +66,7 @@ KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
 
 KVTree::~KVTree() {
     LOG("Closing");
+    cout << "innernode: " << inner_count << endl;
     pmpool.close();
     LOG("Closed ok");
 }
@@ -368,6 +369,9 @@ void KVTree::InnerUpdateAfterSplit(KVNode* node, unique_ptr<KVNode> new_node, st
 
     // split inner node at the midpoint, update parents as needed
     unique_ptr<KVInnerNode> ni(new KVInnerNode());                       // create new inner node
+    inner_count++;                                                       // count inner nodes
+    if (inner_count % 1000 == 0)
+        cout << "inner node = " << inner_count << " nodes " << endl;
     ni->parent = inner->parent;                                          // set parent reference
     for (int i = INNER_KEYS_UPPER; i < keycount; i++) {                  // move all upper keys
         ni->keys[i - INNER_KEYS_UPPER] = move(inner->keys[i]);           // move key string

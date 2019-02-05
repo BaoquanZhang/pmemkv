@@ -62,8 +62,10 @@
 
 #include "../pmemkv.h"
 #include "nvlsm_config.h"
+#include "lsm_tree.h"
 
 using namespace std;
+using namespace pmemkv::lsm_tree;
 /* pmdk namespace */
 using namespace pmem::obj;
 
@@ -282,6 +284,7 @@ class NVLsm2 : public KVEngine {
         size_t run_size;                                     // the number of kv pairs
         size_t layer_depth;
         size_t com_ratio;
+        KVTree* kvtree;
         NVLsm2(const string& path, const size_t size);        // default constructor
         ~NVLsm2();                                          // default destructor
         // internal structure

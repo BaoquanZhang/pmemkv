@@ -39,7 +39,7 @@
 namespace pmemkv {
 namespace nvlsm2 {
 
-pool<LSM_Root> pmpool;
+pool<KVRoot> pmpool;
 size_t pmsize;
 size_t run_count = 0;
 size_t read_count = 0;
@@ -100,11 +100,11 @@ NVLsm2::NVLsm2(const string& path, const size_t size)
     // Create/Open pmem pool
     if (access(path.c_str(), F_OK) != 0) {
         LOG("Creating filesystem pool, path=" << path << ", size=" << to_string(size));
-        pmpool = pool<LSM_Root>::create(path.c_str(), LAYOUT, size, S_IRWXU);
+        pmpool = pool<KVRoot>::create(path.c_str(), LAYOUT, size, S_IRWXU);
         pmsize = size;
     } else {
         LOG("Opening filesystem pool, path=" << path);
-        pmpool = pool<LSM_Root>::open(path.c_str(), LAYOUT);
+        pmpool = pool<KVRoot>::open(path.c_str(), LAYOUT);
         struct stat st;
         stat(path.c_str(), &st);
         pmsize = (size_t) st.st_size;
@@ -116,9 +116,8 @@ NVLsm2::NVLsm2(const string& path, const size_t size)
         cout << "Fail to initialize the thread pool!" << endl;
         exit(-1);
     }
-    // initialize rand seed for prun
-    srand(time(0));
     // create a mem_table
+    kvtree = new KVTree(path, size, pmpool);
     mem_table = new MemTable(run_size);
     // reserve space for the meta_table of first components 
     meta_table.emplace_back(0);
@@ -155,10 +154,12 @@ KVStatus NVLsm2::Get(const string& key, string* value) {
     //cout << "start to get key: " << key << endl;
     string val;
     LOG("Searching in memory buffer");
-    if (mem_table->search(key, val)) {
+    if (kvtree->Get(key, value))
+        return OK;
+    /*if (mem_table->search(key, val)) {
         value->append(val);
         return OK;
-    }
+    }*/
 
     for (int i = 0; i < meta_table.size(); i++) {
         //cout << "total " << meta_table.size() << " component";
@@ -179,16 +180,17 @@ KVStatus NVLsm2::Get(const string& key, string* value) {
 
 KVStatus NVLsm2::Put(const string& key, const string& value) {
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
-    //cout << "Put key=" << key.c_str() << ", value.size=" << to_string(value.size()) << endl;;
+    kvtree->Put(key, value);
+    /*
     if (mem_table->append(key, value)) {
-        /* write buffer is filled up if queue size is larger than 4, wait */
+        // write buffer is filled up if queue size is larger than 4, wait
         while (mem_table->getSize() > 0);
         mem_table->push_queue();
         //cout << "memTable: " << mem_table->getSize() << endl; 
         Task * persist_task = new Task(&persist, (void *) this);
         persist_pool->add_task(persist_task);
         //cout << "started a persist thread " << endl;
-    }
+    }*/
     return OK;
 }
 

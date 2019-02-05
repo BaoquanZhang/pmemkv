@@ -58,6 +58,7 @@
 #include "lsm_tree.h"
 
 using namespace std;
+using namespace pmemkv::lsm_tree;
 /* pmdk namespace */
 using namespace pmem::obj;
 

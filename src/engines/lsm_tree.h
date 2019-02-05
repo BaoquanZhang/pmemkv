@@ -46,7 +46,7 @@ using pmem::obj::delete_persistent;
 using pmem::obj::pool;
 
 namespace pmemkv {
-namespace nvlsm {
+namespace lsm_tree {
 
 #define INNER_KEYS 4                                       // maximum keys for inner nodes
 #define INNER_KEYS_MIDPOINT (INNER_KEYS / 2)               // halfway point within the node
@@ -135,6 +135,7 @@ struct KVTreeAnalysis {                                    // tree analysis stru
 class KVTree {                           // hybrid B+ tree engine
   public:
     KVTree(const string& path, size_t size);               // default constructor
+    KVTree(const string& path, const size_t size, pool<KVRoot> allpool); 
     ~KVTree();                                             // default destructor
 
     KVStatus Get(int32_t limit,                            // copy value to fixed-size buffer
@@ -184,5 +185,5 @@ class KVTree {                           // hybrid B+ tree engine
     unique_ptr<KVNode> tree_top;                           // pointer to uppermost inner node
 };
 
-} // namespace nvlsm
+} // namespace lsm_tree
 } // namespace pmemkv
