@@ -138,6 +138,9 @@ class KVTree {                           // hybrid B+ tree engine
     KVTree(const string& path, const size_t size, pool<KVRoot> allpool); 
     ~KVTree();                                             // default destructor
 
+    size_t GetCounts() { 
+        return key_counts 
+    };
     KVStatus Get(int32_t limit,                            // copy value to fixed-size buffer
                  int32_t keybytes,
                  int32_t* valuebytes,
@@ -183,6 +186,7 @@ class KVTree {                           // hybrid B+ tree engine
     pool<KVRoot> pmpool;                                   // pool for persistent root
     size_t pmsize;                                         // actual size of persistent pool
     unique_ptr<KVNode> tree_top;                           // pointer to uppermost inner node
+    size_t key_counts;
 };
 
 } // namespace lsm_tree

@@ -4,4 +4,4 @@
 bin/
 cmake-build-debug/
 googletest-*.zip
-*.swap
+*.swp

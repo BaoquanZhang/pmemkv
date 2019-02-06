@@ -44,7 +44,7 @@
 namespace pmemkv {
 namespace lsm_tree {
 
-KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
+KVTree::KVTree(const string& path, const size_t size) : pmpath(path), key_counts(0) {
     if (path.find("/dev/dax") == 0) {
         LOG("Opening device dax pool, path=" << path);
         pmpool = pool<KVRoot>::open(path.c_str(), LAYOUT);
@@ -283,6 +283,7 @@ void KVTree::LeafFillSpecificSlot(KVLeafNode* leafnode, const uint8_t hash,
         leafnode->keys[slot] = key;
     }
     leafnode->leaf->slots[slot].get_rw().set(hash, key, value);
+    key_counts++;
 }
 
 void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,

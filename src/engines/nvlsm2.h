@@ -280,11 +280,15 @@ class NVLsm2 : public KVEngine {
     private:
         ThreadPool * persist_pool;
         ThreadPool * compact_pool;
+        string pool_path;
+        size_t pool_size;
     public:
         size_t run_size;                                     // the number of kv pairs
         size_t layer_depth;
         size_t com_ratio;
         KVTree* kvtree;
+        KVTree* immutable_tree;
+        vector<KVTree*> tree_to_delete;
         NVLsm2(const string& path, const size_t size);        // default constructor
         ~NVLsm2();                                          // default destructor
         // internal structure

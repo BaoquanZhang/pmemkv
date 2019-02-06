@@ -51,13 +51,21 @@ size_t write_unit = 0;
  * v_nvlsm: an instance of nvlsm
  * */
 static void persist(void * v_nvlsm) {
-    //cout << "persisting a mem_table!" << endl;
-    NVLsm2 * nvlsm = (NVLsm2 *) v_nvlsm;
-    /* get the targeting meta_table[0] */ 
-    auto meta_table = &(nvlsm->meta_table[0]);
-    /* get the queue head from mem_table */
-    auto mem_table = nvlsm->mem_table;
-    auto run = mem_table->pop_queue();
+    //cout << "persisting the immutable tree" << endl;
+    NVLsm2 * nvlsm = (NVLsm2 *) v_nvlsm; 
+    auto kvtree = nvlsm->immutable_tree;
+    auto leaf = pmpool.get_root()->head;
+    map<char*, char*> leaf_map;
+    while (leaf) {
+        leaf_map.clear();
+        for (int slot = LEAF_KEYS; slot--;) {
+            auto kvslot = leaf->slots[slot].get_ro();
+            if (kvslot.empty() || kvslot.hash() == 0) continue;
+            leaf_map.emplace(kvslot.key(), kvslot.val());
+        }
+
+        leaf = leaf-next;
+    }
     /* allocate space from NVM and copy data from mem_table */
     persistent_ptr<PRun> p_run;
     int i = 0;
@@ -96,7 +104,8 @@ void Log::append(string str) {
 
 /* ######################## Implementations for NVLsm2 #################### */
 NVLsm2::NVLsm2(const string& path, const size_t size) 
-    : run_size(RUN_SIZE), layer_depth(MAX_DEPTH), com_ratio(COM_RATIO) {
+    : run_size(RUN_SIZE), layer_depth(MAX_DEPTH), com_ratio(COM_RATIO),
+      pool_path(path), pool_size(size), kvtree(NULL), immutable_tree(NULL) {
     // Create/Open pmem pool
     if (access(path.c_str(), F_OK) != 0) {
         LOG("Creating filesystem pool, path=" << path << ", size=" << to_string(size));
@@ -181,16 +190,14 @@ KVStatus NVLsm2::Get(const string& key, string* value) {
 KVStatus NVLsm2::Put(const string& key, const string& value) {
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
     kvtree->Put(key, value);
-    /*
-    if (mem_table->append(key, value)) {
-        // write buffer is filled up if queue size is larger than 4, wait
-        while (mem_table->getSize() > 0);
-        mem_table->push_queue();
-        //cout << "memTable: " << mem_table->getSize() << endl; 
+    if (kvtree.GetCounts() >= KVTREE_SIZE) {  
+        while(immutable_tree != NULL);
+        imuutable_tree = kvtree;
+        kvtree = new KVTree(pool_path, pool_size, pmpool);
         Task * persist_task = new Task(&persist, (void *) this);
         persist_pool->add_task(persist_task);
-        //cout << "started a persist thread " << endl;
-    }*/
+        cout << "started a persist thread " << endl;
+    }
     return OK;
 }
 
