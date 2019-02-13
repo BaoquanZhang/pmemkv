@@ -62,10 +62,9 @@
 
 #include "../pmemkv.h"
 #include "nvlsm_config.h"
-#include "lsm_tree.h"
+#include "nvlsm/bloom_filter.h"
 
 using namespace std;
-using namespace pmemkv::lsm_tree;
 /* pmdk namespace */
 using namespace pmem::obj;
 
@@ -159,6 +158,7 @@ class MemTable {
 /* PRun: container for storing kv_pairs on pmem*/
 struct KeyEntry {
     char key[KEY_SIZE];
+    char val[VAL_SIZE];
     size_t val_len;
     char* p_val;
     bool valid = true;
@@ -168,10 +168,13 @@ struct KeyEntry {
 class PRun {
     public:
         PRun();
+        PRun(size_t size);
         ~PRun();
         KeyEntry key_entry[RUN_SIZE];
-        int id; // random id
+        persistent_ptr<KeyEntry[]> kv_slots;
+        int id; // floor id
         char vals[VAL_SIZE * RUN_SIZE];
+        persistent_ptr<char[]> values;
         size_t size;
         int iter;
         int refered;
@@ -215,18 +218,19 @@ class PSegment {
     public:
         /* variable */
         list<persistent_ptr<PRun>> pRuns; // included runs, the front() is the top
-        set<persistent_ptr<PRun>> runSet; // all of the runs in a segment
+        //set<persistent_ptr<PRun>> runSet; // all of the runs in a segment
         size_t start;
         size_t end;
         int depth;
         int iter;
+        KVRange kvrange;
         map<RunIndex, int> search_stack;
         persistent_ptr<PRun> get_run(); // return the top run
         /* utilities */
-        bool isInclude(persistent_ptr<PRun> run);
         void addRuns(list<persistent_ptr<PRun>> runs);
         void addRun(persistent_ptr<PRun> run);
         void seek(char* key);
+        void seek_start();
         bool next(RunIndex& runIndex);
         bool search(const string& key, string& value);
         char* get_key(int index);
@@ -234,6 +238,7 @@ class PSegment {
         void display();
         PSegment(PSegment* old_seg, persistent_ptr<PRun> p_run, size_t start_i, size_t end_i);
         PSegment(vector<PSegment*> old_segs, persistent_ptr<PRun> p_run, size_t start_i, size_t end_i);
+        PSegment(map<string, string> merge_buf, map<string, string>::iterator& iter, size_t size);
         ~PSegment();
 };
 
@@ -245,6 +250,7 @@ class MetaTable {
         pthread_rwlock_t rwlock;
         size_t next_compact;  // index for the run of the last compaction
         map<KVRange, PSegment*> segRanges;
+        map<string, PSegment*> seg_ranges;
         MetaTable();
         MetaTable(int comp_index);
         ~MetaTable();
@@ -256,6 +262,9 @@ class MetaTable {
         PSegment* getMerge(int id);
         void getMerge(int id, vector<PSegment*>& segs);
         void merge(PSegment* seg, vector<persistent_ptr<PRun>>& runs);
+        void merge(PSegment* seg, map<string, string>& merge_buffer);
+        void merge_all(map<string, string>& merge_buffer);
+        void add_kvs(map<string, string>& merge_buffer);
         void add(vector<PSegment*> segs);
         void add(PSegment* seg);
         void del(vector<PSegment*> segs);
@@ -280,15 +289,11 @@ class NVLsm2 : public KVEngine {
     private:
         ThreadPool * persist_pool;
         ThreadPool * compact_pool;
-        string pool_path;
-        size_t pool_size;
     public:
         size_t run_size;                                     // the number of kv pairs
         size_t layer_depth;
         size_t com_ratio;
-        KVTree* kvtree;
-        KVTree* immutable_tree;
-        vector<KVTree*> tree_to_delete;
+        bloom_parameters parameters;
         NVLsm2(const string& path, const size_t size);        // default constructor
         ~NVLsm2();                                          // default destructor
         // internal structure
@@ -297,7 +302,7 @@ class NVLsm2 : public KVEngine {
         persistent_ptr<Log> meta_log; // log for meta table
         // utility
         void display();
-        void compact(int comp, vector<persistent_ptr<PRun>>& runs);
+        void compact(int comp, map<string, string>& merge_buffer);
         // public interface
         string Engine() final { return ENGINE; }               // engine identifier
         KVStatus Get(int32_t limit,                            // copy value to fixed-size buffer

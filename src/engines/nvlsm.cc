@@ -126,9 +126,6 @@ NVLsm::NVLsm(const string& path, const size_t size) {
     run_size = RUN_SIZE;
     layer_depth = LAYER_DEPTH;
     com_ratio = COM_RATIO;
-    LOG("Creating kvtree with size ");
-    kvtree = new KVTree(path + '0', 1024 * 1024 * 1024);
-    LOG("Creating kvtree done");
     // Create/Open pmem pool
     if (access(path.c_str(), F_OK) != 0) {
         LOG("Creating filesystem pool, path=" << path << ", size=" << to_string(size));
@@ -169,7 +166,6 @@ NVLsm::~NVLsm() {
     persist_pool->destroy_threadpool();
     delete_persistent_atomic<Log>(meta_log);
     delete mem_table;
-    delete kvtree;
     delete persist_pool;
     LOG("Closing persistent pool");
     pmpool.close();
@@ -185,12 +181,13 @@ KVStatus NVLsm::Get(const int32_t limit, const int32_t keybytes, int32_t* valueb
 KVStatus NVLsm::Get(const string& key, string* value) {
     LOG("Get for key=" << key.c_str());
     //cout << "start to get key: " << key << endl;
+    string val;
     LOG("Searching in memory buffer");
-    if (kvtree->Get(key, value) == OK) {
+    if (mem_table->search(key, val)) {
+        value = new string(val);
         return OK;
     }
 
-    string val;
     for (int i = 0; i < meta_table.size(); i++) {
         //cout << "total " << meta_table.size() << " component";
         //cout << ": searchng in compoent " << i << endl;
@@ -215,9 +212,8 @@ KVStatus NVLsm::Get(const string& key, string* value) {
 KVStatus NVLsm::Put(const string& key, const string& value) {
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
     //cout << "Put key=" << key.c_str() << ", value.size=" << to_string(value.size()) << endl;;
-    kvtree->Put(key, value);
-    /*
     if (mem_table->append(key, value)) {
+        /* write buffer is filled up if queue size is larger than 4, wait */
         while (mem_table->getSize() > com_ratio);
         mem_table->push_queue();
         //cout << "memTable: " << mem_table->getSize() << endl; 
@@ -225,7 +221,6 @@ KVStatus NVLsm::Put(const string& key, const string& value) {
         persist_pool->add_task(persist_task);
         //cout << "started a persist thread " << endl;
     }
-    */
     return OK;
 }
 
@@ -266,9 +261,9 @@ void NVLsm::compact(int comp_index) {
         /* merge sort the runs */
         merge_sort(unit);
         /* delete the old meta data */
-        //LOG("deleting old meta data");
-        //meta_log->append("delete old meta data");
-        //meta_log.persist();
+        LOG("deleting old meta data");
+        meta_log->append("delete old meta data");
+        meta_log.persist();
         if (!(meta_table[comp_index].del(unit->up_run))) {
             cout << "delete meta " << comp_index << " error! " << endl; 
             unit->display();
@@ -279,17 +274,17 @@ void NVLsm::compact(int comp_index) {
             unit->display();
             exit(1);
         }
-        //LOG("adding new meta data");
-        //meta_log->append("add new metadata");
-        //meta_log.persist();
+        LOG("adding new meta data");
+        meta_log->append("add new metadata");
+        meta_log.persist();
         if (!(meta_table[comp_index + 1].add(unit->new_runs))) {
             cout << "add meta in C " << comp_index + 1 << " error! " << endl; 
             unit->display();
             exit(1);
         }
-        //meta_log->append("commit compaction");
-        //meta_log.persist();
-        //LOG("deleting old data");
+        meta_log->append("commit compaction");
+        meta_log.persist();
+        LOG("deleting old data");
         delete unit;
         compact(comp_index + 1);
     }
@@ -307,19 +302,19 @@ void NVLsm::compact(persistent_ptr<PRun> run, int index) {
     merge_sort(unit);
     /* delete the old meta data */
     LOG("deleting old meta data");
-    //meta_log->append("delete old meta data");
-    //meta_log.persist();
+    meta_log->append("delete old meta data");
+    meta_log.persist();
     meta_table[index].del(unit->low_runs);
-    //meta_log->append("add new metadata");
-    //meta_log.persist();
+    meta_log->append("add new metadata");
+    meta_log.persist();
     if (!(meta_table[index].add(unit->new_runs))) {
         cout << "add meta in C " << index << " error! " << endl; 
         unit->display();
         exit(1);
     }
-    //meta_log->append("commit compaction");
-    //meta_log.persist();
-    //LOG("deleting old data");
+    meta_log->append("commit compaction");
+    meta_log.persist();
+    LOG("deleting old data");
     delete unit;
     LOG("stop compactiom");
 }

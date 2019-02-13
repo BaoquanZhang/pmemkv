@@ -44,7 +44,7 @@
 namespace pmemkv {
 namespace kvtree2 {
 
-KVTree::KVTree(const string& path, const size_t size) : pmpath(path), inner_count(0) {
+KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
     if (path.find("/dev/dax") == 0) {
         LOG("Opening device dax pool, path=" << path);
         pmpool = pool<KVRoot>::open(path.c_str(), LAYOUT);
@@ -66,7 +66,6 @@ KVTree::KVTree(const string& path, const size_t size) : pmpath(path), inner_coun
 
 KVTree::~KVTree() {
     LOG("Closing");
-    cout << "innernode: " << inner_count << endl;
     pmpool.close();
     LOG("Closed ok");
 }
@@ -314,7 +313,11 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
         }
         for (int slot = LEAF_KEYS; slot--;) {
             if (strcmp(leafnode->keys[slot].c_str(), split_key.data()) > 0) {
-                new_leaf->slots[slot].swap(leafnode->leaf->slots[slot]);
+                //new_leaf->slots[slot].swap(leafnode->leaf->slots[slot]);
+                new_leaf->slots[slot].get_rw().set(
+                        leafnode->hashes[slot],
+                        leafnode->keys[slot],
+                        leafnode->leaf->slots[slot].get_rw().val());
                 new_leafnode->hashes[slot] = leafnode->hashes[slot];
                 new_leafnode->keys[slot] = leafnode->keys[slot];
                 leafnode->hashes[slot] = 0;
@@ -369,9 +372,6 @@ void KVTree::InnerUpdateAfterSplit(KVNode* node, unique_ptr<KVNode> new_node, st
 
     // split inner node at the midpoint, update parents as needed
     unique_ptr<KVInnerNode> ni(new KVInnerNode());                       // create new inner node
-    inner_count++;                                                       // count inner nodes
-    if (inner_count % 1000 == 0)
-        cout << "inner node = " << inner_count << " nodes " << endl;
     ni->parent = inner->parent;                                          // set parent reference
     for (int i = INNER_KEYS_UPPER; i < keycount; i++) {                  // move all upper keys
         ni->keys[i - INNER_KEYS_UPPER] = move(inner->keys[i]);           // move key string

@@ -8,7 +8,6 @@
 #define SLOW_DOWN_US 2
 #define PAIR_SIZE (KEY_SIZE + VAL_SIZE)
 #define LAYER_DEPTH 4
-#define KVTREE_SIZE (RUN_SIZE * COM_RATIO)
 // for SAT
 #define AMP
 #define MAX_DEPTH 10

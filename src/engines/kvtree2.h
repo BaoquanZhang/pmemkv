@@ -33,7 +33,6 @@
 #pragma once
 
 #include <vector>
-#include <iostream>
 #include "../pmemkv.h"
 
 using std::move;
@@ -46,7 +45,6 @@ using pmem::obj::transaction;
 using pmem::obj::delete_persistent;
 using pmem::obj::pool;
 
-using namespace std;
 namespace pmemkv {
 namespace kvtree2 {
 
@@ -187,8 +185,6 @@ class KVTree : public KVEngine {                           // hybrid B+ tree eng
     pool<KVRoot> pmpool;                                   // pool for persistent root
     size_t pmsize;                                         // actual size of persistent pool
     unique_ptr<KVNode> tree_top;                           // pointer to uppermost inner node
-    //add for count innernodes
-    size_t inner_count;
 };
 
 } // namespace kvtree

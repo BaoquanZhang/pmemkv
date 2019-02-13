@@ -55,10 +55,8 @@
 
 #include "../pmemkv.h"
 #include "nvlsm_config.h"
-#include "lsm_tree.h"
 
 using namespace std;
-using namespace pmemkv::lsm_tree;
 /* pmdk namespace */
 using namespace pmem::obj;
 
@@ -212,7 +210,6 @@ class NVLsm : public KVEngine {
         ~NVLsm();                                          // default destructor
         // internal structure
         MemTable * mem_table;
-        KVTree * kvtree;
         vector<MetaTable> meta_table;
         persistent_ptr<Log> meta_log; // log for meta table
         // utility
@@ -235,5 +232,6 @@ class NVLsm : public KVEngine {
                      const string& value) final;
         KVStatus Remove(const string& key) final;              // remove value for key
 };
+
 } // namespace nvlsm
 } // namespace pmemkv

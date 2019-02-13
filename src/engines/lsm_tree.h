@@ -139,7 +139,7 @@ class KVTree {                           // hybrid B+ tree engine
     ~KVTree();                                             // default destructor
 
     size_t GetCounts() { 
-        return key_counts 
+        return key_counts; 
     };
     KVStatus Get(int32_t limit,                            // copy value to fixed-size buffer
                  int32_t keybytes,
