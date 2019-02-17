@@ -52,7 +52,7 @@ static const string USAGE =
                 "--threads=<integer>        (number of concurrent threads, default: 1)\n"
                 "--value_size=<integer>     (size of values in bytes, default: 100)\n"
                 "--read_ratio=<double>,     (the ratio is [0,1])\n"
-				"--benchmarks=<name>,       (comma-separated list of benchmarks to run)\n"
+		"--benchmarks=<name>,       (comma-separated list of benchmarks to run)\n"
                 "    fillseq                (load N values in sequential key order into fresh db)\n"
                 "    fillrandom             (load N values in random key order into fresh db)\n"
                 "    overwrite              (replace N values in random key order)\n"
@@ -583,46 +583,46 @@ private:
         DoDelete(thread, false);
     }
 
-	void ReadWrite(ThreadState *thread)  {
+    void ReadWrite(ThreadState *thread)  {
         if (num_ != FLAGS_num) {
             char msg[100];
             snprintf(msg, sizeof(msg), "(%d ops)", num_);
             thread->stats.AddMessage(msg);
         }
 
-		if (FLAGS_read_ratio < 0 || FLAGS_read_ratio > 1) {
-			char msg[100];
-			snprintf(msg, sizeof(msg), "(%f read_ratio)", FLAGS_read_ratio);
-			thread->stats.AddMessage(msg);
-		}
-		int mask = 1000;
-		int cut = floor(FLAGS_read_ratio * mask);
+	if (FLAGS_read_ratio < 0 || FLAGS_read_ratio > 1) {
+	    char msg[100];
+	    snprintf(msg, sizeof(msg), "(%f read_ratio)", FLAGS_read_ratio);
+	    thread->stats.AddMessage(msg);
+	}
+	int mask = 1000;
+	int cut = floor(FLAGS_read_ratio * mask);
 
         KVStatus s;
         int64_t bytes = 0;
         int found = 0;
-		int reads = 0;
-		int writes = 0;
+	int reads = 0;
+	int writes = 0;
         for (int i = 0; i < num_; i++) {
-			const int rd = thread->rand.Next();
+	    const int rd = thread->rand.Next();
             const int k = rd % FLAGS_num;
-			const int opt = rd % mask;
+	    const int opt = rd % mask;
             char key[100];
             snprintf(key, sizeof(key), "%016d", k);
-			if (opt <= cut) {
-				reads++;
-	            string value;
-	            if (kv_->Get(key, &value) == OK) found++;
-	            thread->stats.FinishedSingleOp();
-	            bytes += value.length() + strlen(key);				
-			} else {
-				writes++;
+	    if (opt <= cut) {
+		reads++;
+	        string value;
+	        if (kv_->Get(key, &value) == OK) found++;
+	        thread->stats.FinishedSingleOp();
+	        bytes += value.length() + strlen(key);				
+	    } else {
+		writes++;
             	string value = string();
             	value.append(value_size_, 'X');
             	s = kv_->Put(key, value);
             	bytes += value_size_ + strlen(key);
-				thread->stats.FinishedSingleOp();
-			}
+		thread->stats.FinishedSingleOp();
+	    }
             if (s != OK) {
                 fprintf(stdout, "Out of space at key %i\n", i);
                 exit(1);
