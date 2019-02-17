@@ -46,6 +46,7 @@ size_t read_count = 0;
 size_t write_count = 0;
 size_t read_unit = 0;
 size_t write_unit = 0;
+bloom_parameters parameters;
 /* #####################static functions for multiple threads ####################### */
 /* persist: persist a mem_table to c0
  * v_nvlsm: an instance of nvlsm
@@ -70,6 +71,7 @@ static void persist(void * v_nvlsm) {
         strncpy(&vals[i * VAL_SIZE], it->second.c_str(), it->second.size());
         key_entry[i].val_len = it->second.size();
         key_entry[i].p_val = &vals[i * VAL_SIZE];
+        p_run->bf.insert(it->first);
         i++;
 #ifdef AMP
         write_count++;
@@ -116,8 +118,13 @@ NVLsm2::NVLsm2(const string& path, const size_t size)
         cout << "Fail to initialize the thread pool!" << endl;
         exit(-1);
     }
-    // initialize rand seed for prun
-    srand(time(0));
+    // initialize bf for PRuns
+    // How many elements roughly do we expect to insert?
+    parameters.projected_element_count = RUN_SIZE;
+    // Maximum tolerable false positive probability? (0,1)
+    parameters.false_positive_probability = 0.0001; // 1 in 10000
+    // Simple randomizer (optional)
+    parameters.random_seed = 0xA5A5A5A5;
     // create a mem_table
     mem_table = new MemTable(run_size);
     // reserve space for the meta_table of first components 
@@ -473,6 +480,7 @@ inline void MetaTable::copy_kv(persistent_ptr<PRun> des_run, int des_i,
     strncpy(&des_vals[des_i * VAL_SIZE], &src_vals[src_i * VAL_SIZE], src_entry[src_i].val_len);
     des_entry[des_i].val_len = src_entry[src_i].val_len;
     des_entry[des_i].p_val = &des_vals[des_i * VAL_SIZE];
+    des_run->bf.insert(src_entry[src_i].key, KEY_SIZE);
 #ifdef AMP
     write_count++;
     if (write_count >= write_unit * 10000000) {
@@ -773,8 +781,7 @@ void MetaTable::build_layer(persistent_ptr<PRun> run) {
     return;
 }
 /* ###################### PRun ######################### */
-PRun::PRun(): size(0), iter(0) {
-    id = rand();
+PRun::PRun(): size(0), iter(0), bf(parameters) {
 }
 PRun::~PRun() {
 }
@@ -935,9 +942,17 @@ void PSegment::addRun(persistent_ptr<PRun> run) {
  * */
 bool PSegment::search(const string& key, string& value) {
     //cout << "PSeg: start to search " << key << endl;
-    auto cur_run = get_run();
-    int left = start;
-    int right = end;
+    persistent_ptr<PRun> cur_run;
+    for (auto pRun : pRuns) {
+        if (pRun->bf.contains(key)) {
+            cur_run = pRun;
+            break;
+        }
+    }
+    if (cur_run == NULL)
+        return false;
+    int left = 0;
+    int right = cur_run->size - 1;
     int mid = 0;
     int cur_dep = 1;
     while (cur_run && cur_dep <= depth) {

@@ -49,6 +49,8 @@
 #include <list>
 /* thread pool headers */
 #include "nvlsm/threadpool.h"
+/* bloom filter */
+#include "nvlsm/bloom_filter.h"
 /* pmdk headers */
 #include <libpmemlog.h>
 #include <libpmemobj++/persistent_ptr.hpp>
@@ -168,6 +170,7 @@ class PRun {
         PRun();
         ~PRun();
         KeyEntry key_entry[RUN_SIZE];
+        bloom_filter bf;
         int id; // random id
         char vals[VAL_SIZE * RUN_SIZE];
         size_t size;
@@ -179,6 +182,7 @@ class PRun {
         void get_range(KVRange& range);
         void display();
         int find_key(const string& key, string& val, int left, int right, int& mid);
+
 };
 /* segment iterator */
 struct RunIndex {
