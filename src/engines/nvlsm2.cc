@@ -87,7 +87,7 @@ static void persist(void * v_nvlsm) {
     runs.push_back(p_run);
     nvlsm->compact(0, runs);
     //cout << "after building new layers: " << endl;
-    nvlsm->display();
+    //nvlsm->display();
     //cout << "persist stop" << endl;
 }
 /* ######################## Log #########################################*/
@@ -843,8 +843,7 @@ int PRun::find_key(const string& key, string& value, int left, int right, int& m
     //cout << " left = " << left << ", right = " << right;
     //cout << endl;
     if (left > right) {
-        cout << "error happends! left > right when binary searching" << endl;
-        exit(-1);
+        return -1;
     }
     int res = 0;
     while (left <= right) {
@@ -959,7 +958,9 @@ bool PSegment::search(const string& key, string& value) {
         //cur_run->display();
         //cout << "[" << left << "," << right << "]" << endl;
         auto res = cur_run->find_key(key, value, left, right, mid);
-        if (res == 0) {
+        if (res == -1) {
+            break;
+        } else if (res == 0) {
             //cout << "PSeg: succeed to search " << key << endl;
             return true;
         } else {
