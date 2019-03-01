@@ -43,6 +43,11 @@
 
 namespace pmemkv {
 namespace kvtree2 {
+size_t key_write = 0;
+size_t write_count = 0;
+size_t read_count = 0;
+size_t key_read = 0;
+size_t leaf_count = 0;
 
 KVTree::KVTree(const string& path, const size_t size) : pmpath(path) {
     if (path.find("/dev/dax") == 0) {
@@ -103,8 +108,16 @@ KVStatus KVTree::Get(const int32_t limit, const int32_t keybytes, int32_t* value
                      const char* key, char* value) {
     LOG("Get for key=" << key);
     auto leafnode = LeafSearch(key);
+    /* baoquan add for ra */
+    key_read++;
+    if (key_read == 999999) {
+        std::cout << "read_count = " << read_count << std::endl;
+        key_read = 0;
+    }
+    /* baoquan add for ra end */
     if (leafnode) {
         const uint8_t hash = PearsonHash(key, (size_t) keybytes);
+        read_count++;
         for (int slot = LEAF_KEYS; slot--;) {
             if (leafnode->hashes[slot] == hash) {
                 if (strcmp(leafnode->keys[slot].c_str(), key) == 0) {
@@ -128,8 +141,16 @@ KVStatus KVTree::Get(const int32_t limit, const int32_t keybytes, int32_t* value
 
 KVStatus KVTree::Get(const string& key, string* value) {
     LOG("Get for key=" << key.c_str());
+    /* baoquan add for ra */
+    key_read++;
+    if (key_read == 999999) {
+        std::cout << "read_count = " << read_count << std::endl;
+        key_read = 0;
+    }
+    /* baoquan add for ra end */
     auto leafnode = LeafSearch(key);
     if (leafnode) {
+        read_count++;
         const uint8_t hash = PearsonHash(key.c_str(), key.size());
         for (int slot = LEAF_KEYS; slot--;) {
             if (leafnode->hashes[slot] == hash) {
@@ -148,12 +169,23 @@ KVStatus KVTree::Get(const string& key, string* value) {
 
 KVStatus KVTree::Put(const string& key, const string& value) {
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
+    /* baoquan add for ra */
+    key_write++;
+    if (key_write == 999999) {
+        std::cout << "write_count = " << write_count << std::endl;
+        std::cout << "leaf_count = " << leaf_count << std::endl;
+        key_write = 0;
+    }
+    /* baoquan add for ra end */
     try {
         const uint8_t hash = PearsonHash(key.c_str(), key.size());
         auto leafnode = LeafSearch(key);
         if (!leafnode) {
             LOG("   adding head leaf");
             unique_ptr<KVLeafNode> new_node(new KVLeafNode());
+            /* Baoquan add for SA */
+            leaf_count++;
+            /* Baoquan add for SA ends */
             new_node->is_leaf = true;
             transaction::exec_tx(pmpool, [&] {
                 if (!leaves_prealloc.empty()) {
@@ -280,6 +312,9 @@ void KVTree::LeafFillSpecificSlot(KVLeafNode* leafnode, const uint8_t hash,
         leafnode->keys[slot] = key;
     }
     leafnode->leaf->slots[slot].get_rw().set(hash, key, value);
+    /* baoquan add for wa */
+    write_count++;
+    /* baoquan add for wa ends */
 }
 
 void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
@@ -295,6 +330,7 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
 
     // split leaf into two leaves, moving slots that sort above split key to new leaf
     unique_ptr<KVLeafNode> new_leafnode(new KVLeafNode());
+    leaf_count++;
     new_leafnode->parent = leafnode->parent;
     new_leafnode->is_leaf = true;
     transaction::exec_tx(pmpool, [&] {
@@ -313,7 +349,14 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
         }
         for (int slot = LEAF_KEYS; slot--;) {
             if (strcmp(leafnode->keys[slot].c_str(), split_key.data()) > 0) {
-                new_leaf->slots[slot].swap(leafnode->leaf->slots[slot]);
+                /* baoquan modified to copy data */
+                //new_leaf->slots[slot].swap(leafnode->leaf->slots[slot]);
+                new_leaf->slots[slot].get_rw().set(
+                        leafnode->hashes[slot],
+                        leafnode->keys[slot],
+                        leafnode->leaf->slots[slot].get_rw().val());
+                write_count++;
+                /* baoquan mldified to copy data end */
                 new_leafnode->hashes[slot] = leafnode->hashes[slot];
                 new_leafnode->keys[slot] = leafnode->keys[slot];
                 leafnode->hashes[slot] = 0;

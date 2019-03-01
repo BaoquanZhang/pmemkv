@@ -40,6 +40,7 @@
 #include "mutexlock.h"
 #include "random.h"
 #include "pmemkv.h"
+#include <cmath>
 
 static const string USAGE =
         "pmemkv_bench\n"
@@ -605,8 +606,10 @@ private:
 	int writes = 0;
         for (int i = 0; i < num_; i++) {
 	    const int rd = thread->rand.Next();
-            const int k = rd % FLAGS_num;
+        const int k = rd % FLAGS_num;
 	    const int opt = rd % mask;
+        //if (i < 100)
+            //fprintf(stdout, "%d %d\n", k, opt);
             char key[100];
             snprintf(key, sizeof(key), "%016d", k);
 	    if (opt <= cut) {
@@ -669,7 +672,7 @@ int main(int argc, char **argv) {
             FLAGS_db = argv[i] + 5;
         } else if (sscanf(argv[i], "--db_size_in_gb=%d%c", &n, &junk) == 1) {
             FLAGS_db_size_in_gb = n;
-		} else if (sscanf(argv[i], "--read_ratio=%f%c", &r, &junk) == 1) {
+		} else if (sscanf(argv[i], "--read_ratio=%lf%c", &r, &junk) == 1) {
             FLAGS_read_ratio = r;
         } else {
             fprintf(stderr, "Invalid flag '%s'\n", argv[i]);
