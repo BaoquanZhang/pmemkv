@@ -72,6 +72,8 @@ class KVEngine {                                           // storage engine imp
     virtual KVStatus Put(const string& key,                // copy value from std::string
                          const string& value) = 0;
     virtual KVStatus Remove(const string& key) = 0;        // remove value for key
+    virtual KVStatus Seek(const string& key);
+    virtual KVStatus Next(string& key, string& value);
 };
 
 #pragma pack(push, 1)

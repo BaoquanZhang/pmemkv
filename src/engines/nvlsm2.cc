@@ -198,6 +198,42 @@ KVStatus NVLsm2::Remove(const string& key) {
     return OK;
 }
 
+KVStatus NVLsm2::Seek(const string& key) {
+    for (int i = 0; i < meta_table.size(); i++) {
+        auto iter = meta_table[i].seek(key.c_str());
+        if (iter != meta_table[i].segRanges.end()) {
+            iters.push_back(iter);
+            iter->second->seek(key.c_str());
+            RunIndex run_index;
+            iter->second->next(run_index);
+            search_stack.emplace(run_index, i);
+        }
+    }
+    return OK;
+}
+
+KVStatus NVLsm2::Next(string& key, string& value) {
+    if (search_stack.size() == 0)
+        return NOT_FOUND;
+    auto run_index = search_stack.begin()->first;
+    int comp = search_stack.begin()->second;
+    key.append(run_index.get_key(), KEY_SIZE);
+    value.append(run_index.get_val(), VAL_SIZE);
+    auto iter = iters[comp];
+    auto pSeg = iter->second;
+    search_stack.erase(run_index);
+    if (!pSeg->next(run_index)) {
+        iter++;
+        if (iter != meta_table[comp].segRanges.end()) {
+            pSeg = iter->second;
+            pSeg->seek(pSeg->get_key(pSeg->start));
+            pSeg->next(run_index);
+            search_stack.emplace(run_index, comp);
+        }
+    }
+    return OK;
+}
+
 /* display the meta tables */
 void NVLsm2::display() {
     cout << "=========== start displaying meta table ======" << endl;
@@ -650,6 +686,13 @@ void MetaTable::search(KVRange& kvRange, vector<PSegment*>& segs) {
         reverse(segs.begin(), segs.end());
     return;
 }
+
+/* seek: it is for range query */
+map<KVRange, PSegment*>::iterator MetaTable::seek(const string& key) {
+    KVRange kvrange(key, key);
+    return segRanges.lower_bound(kvrange);
+}
+
 /* build_layer: build a new layer using a seg */
 inline void MetaTable::build_link(persistent_ptr<PRun> src, int src_i, persistent_ptr<PRun> des, int des_i) {
     src->key_entry[src_i].next_run = des;
@@ -793,7 +836,7 @@ inline void PRun::get_range(KVRange& range) {
     return;
 }
 /* seek: to the location that is equal or greater than the key */
-void PRun::seek(char* key) {
+void PRun::seek(const char* key) {
     int left = 0; 
     int right = size - 1;
     while (left <= right) {
@@ -1004,7 +1047,7 @@ void PSegment::get_localRange(KVRange& kvRange) {
     return;
 }
 /* seek: seek to the location equal or larger than key */
-void PSegment::seek(char* key) {
+void PSegment::seek(const char* key) {
     search_stack.clear();
     RunIndex runIndex;
     for (auto run_it = pRuns.begin(); run_it != pRuns.end(); run_it++) {

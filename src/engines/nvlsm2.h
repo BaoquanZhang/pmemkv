@@ -173,7 +173,7 @@ class PRun {
         size_t size;
         int iter;
         int refered;
-        void seek(char* key);
+        void seek(const char* key);
         bool next(RunIndex& runIndex);
         char* get_key(int index);
         void get_range(KVRange& range);
@@ -197,6 +197,9 @@ struct RunIndex {
     }
     inline char* const get_key() const {
         return pRun->key_entry[index].key;
+    }
+    inline char* const get_val() const {
+        return pRun->key_entry[index].p_val;
     }
     bool const operator == (const RunIndex& runIndex) const {
         return strncmp(get_key(), runIndex.get_key(), KEY_SIZE) == 0;
@@ -224,7 +227,7 @@ class PSegment {
         bool isInclude(persistent_ptr<PRun> run);
         void addRuns(list<persistent_ptr<PRun>> runs);
         void addRun(persistent_ptr<PRun> run);
-        void seek(char* key);
+        void seek(const char* key);
         bool next(RunIndex& runIndex);
         bool search(const string& key, string& value);
         char* get_key(int index);
@@ -263,6 +266,7 @@ class MetaTable {
         void search(const string& key, vector<PSegment*>& segs);
         void search(KVRange& kvRange, vector<PSegment*>& segs);
         void build_layer(persistent_ptr<PRun> run);
+        map<KVRange, PSegment*>::iterator seek(const string& key);
         void do_build(vector<PSegment*>& overlap_segs, persistent_ptr<PRun> run);
         void build_link(persistent_ptr<PRun> src, int src_i, persistent_ptr<PRun> des, int des_i);
         void display();
@@ -288,6 +292,8 @@ class NVLsm2 : public KVEngine {
         MemTable * mem_table;
         vector<MetaTable> meta_table;
         persistent_ptr<Log> meta_log; // log for meta table
+        vector<map<KVRange, PSegment*>::iterator> iters;
+        map<RunIndex, int> search_stack;
         // utility
         void display();
         void compact(int comp, vector<persistent_ptr<PRun>>& runs);
@@ -303,6 +309,8 @@ class NVLsm2 : public KVEngine {
         KVStatus Put(const string& key,                        // copy value from std::string
                      const string& value) final;
         KVStatus Remove(const string& key) final;              // remove value for key
+        KVStatus Seek(const string& key) final;
+        KVStatus Next(string& key, string& value) final;
 };
 
 } // namespace nvlsm2

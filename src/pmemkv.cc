@@ -80,6 +80,11 @@ void KVEngine::Close(KVEngine* kv) {
     }
 }
 
+KVStatus KVEngine::Seek(const string& key) {
+}
+KVStatus KVEngine::Next(string& key, string& value) {
+}
+
 extern "C" KVEngine* kvengine_open(const char* engine, const char* path, const size_t size) {
     return KVEngine::Open(engine, path, size);
 };
