@@ -212,15 +212,22 @@ struct RunIndex {
     };
 };
 /* persistent segment in a PRun */
+struct Floor {
+    persistent_ptr<PRun> pRun;
+    size_t start;
+    size_t end;
+};
 class PSegment {
     public:
         /* variable */
         list<persistent_ptr<PRun>> pRuns; // included runs, the front() is the top
         set<persistent_ptr<PRun>> runSet; // all of the runs in a segment
+        vector<Floor> floors;
         size_t start;
         size_t end;
         int depth;
         int iter;
+        KVRange kvrange;
         map<RunIndex, int> search_stack;
         persistent_ptr<PRun> get_run(); // return the top run
         /* utilities */

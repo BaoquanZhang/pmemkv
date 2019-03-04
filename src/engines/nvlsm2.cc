@@ -917,6 +917,7 @@ PSegment::PSegment(PSegment* old_seg, persistent_ptr<PRun> run, size_t start_i, 
             addRuns(old_seg->pRuns);
         }
 }
+
 PSegment::PSegment(vector<PSegment*> old_segs, persistent_ptr<PRun> run, size_t start_i, size_t end_i)
     : start(start_i), end(end_i), depth(0), iter(0) {
         if (run) {
@@ -931,7 +932,7 @@ PSegment::PSegment(vector<PSegment*> old_segs, persistent_ptr<PRun> run, size_t 
         depth += max_depth;
 }
 PSegment::~PSegment() {
-    for (auto run : runSet) {
+    for (auto run : pRuns) {
         KVRange range;
         run->get_range(range);
         run->refered--;
@@ -964,9 +965,8 @@ void PSegment::addRuns(list<persistent_ptr<PRun>> runs) {
     return;
 }
 void PSegment::addRun(persistent_ptr<PRun> run) {
-    if (runSet.count(run) == 0 && isInclude(run)) {
-        runSet.emplace(run);
-        pRuns.push_back(run);
+    if (run) {
+        pRuns.push_front(run);
         run->refered++;
     }
     return;

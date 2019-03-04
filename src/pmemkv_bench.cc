@@ -1,3 +1,4 @@
+
 /*
  * Copyright 2017-2018, Intel Corporation
  *
@@ -39,6 +40,7 @@
 #include "mutexlock.h"
 #include "random.h"
 #include "pmemkv.h"
+#include <cmath>
 
 static const string USAGE =
         "pmemkv_bench\n"
@@ -50,7 +52,8 @@ static const string USAGE =
                 "--reads=<integer>          (number of read operations, default: 1000000)\n"
                 "--threads=<integer>        (number of concurrent threads, default: 1)\n"
                 "--value_size=<integer>     (size of values in bytes, default: 100)\n"
-                "--benchmarks=<name>,       (comma-separated list of benchmarks to run)\n"
+                "--read_ratio=<double>,     (the ratio is [0,1])\n"
+		"--benchmarks=<name>,       (comma-separated list of benchmarks to run)\n"
                 "    fillseq                (load N values in sequential key order into fresh db)\n"
                 "    fillrandom             (load N values in random key order into fresh db)\n"
                 "    overwrite              (replace N values in random key order)\n"
@@ -58,11 +61,12 @@ static const string USAGE =
                 "    readrandom             (read N values in random key order)\n"
                 "    readmissing            (read N missing values in random key order)\n"
                 "    deleteseq              (delete N values in sequential key order)\n"
-                "    deleterandom           (delete N values in random key order)\n";
+                "    deleterandom           (delete N values in random key order)\n"
+				"    readwrite           	(read and write N values in random key order follow the ratio)\n";
 
 // Default list of comma-separated operations to run
 static const char *FLAGS_benchmarks =
-        "fillrandom,overwrite,fillseq,readrandom,readseq,readrandom,readmissing,readrandom,deleteseq";
+        "fillrandom,overwrite,fillseq,readrandom,readseq,readrandom,readmissing,readrandom,deleteseq,readwrite";
 
 // Default engine name
 static const char *FLAGS_engine = "kvtree";
@@ -87,6 +91,9 @@ static const char *FLAGS_db = NULL;
 
 // Use following size when opening the database.
 static int FLAGS_db_size_in_gb = 1;
+
+// Use this ratio for readwrite benchmark to set read ratio
+static double FLAGS_read_ratio = 0.5;
 
 using namespace leveldb;
 
@@ -376,6 +383,8 @@ public:
                 method = &Benchmark::DeleteSeq;
             } else if (name == Slice("deleterandom")) {
                 method = &Benchmark::DeleteRandom;
+			} else if (name == Slice("readwrite")) {
+                method = &Benchmark::ReadWrite;
             } else {
                 if (name != Slice()) {  // No error message for empty name
                     fprintf(stderr, "unknown benchmark '%s'\n", name.ToString().c_str());
@@ -574,6 +583,59 @@ private:
     void DeleteRandom(ThreadState *thread) {
         DoDelete(thread, false);
     }
+
+    void ReadWrite(ThreadState *thread)  {
+        if (num_ != FLAGS_num) {
+            char msg[100];
+            snprintf(msg, sizeof(msg), "(%d ops)", num_);
+            thread->stats.AddMessage(msg);
+        }
+
+	if (FLAGS_read_ratio < 0 || FLAGS_read_ratio > 1) {
+	    char msg[100];
+	    snprintf(msg, sizeof(msg), "(%f read_ratio)", FLAGS_read_ratio);
+	    thread->stats.AddMessage(msg);
+	}
+	int mask = 1000;
+	int cut = floor(FLAGS_read_ratio * mask);
+
+        KVStatus s;
+        int64_t bytes = 0;
+        int found = 0;
+	int reads = 0;
+	int writes = 0;
+        for (int i = 0; i < num_; i++) {
+	    const int rd = thread->rand.Next();
+        const int k = rd % FLAGS_num;
+	    const int opt = rd % mask;
+        //if (i < 100)
+            //fprintf(stdout, "%d %d\n", k, opt);
+            char key[100];
+            snprintf(key, sizeof(key), "%016d", k);
+	    if (opt <= cut) {
+		reads++;
+	        string value;
+	        if (kv_->Get(key, &value) == OK) found++;
+	        thread->stats.FinishedSingleOp();
+	        bytes += value.length() + strlen(key);				
+	    } else {
+		writes++;
+            	string value = string();
+            	value.append(value_size_, 'X');
+            	s = kv_->Put(key, value);
+            	bytes += value_size_ + strlen(key);
+		thread->stats.FinishedSingleOp();
+	    }
+            if (s != OK) {
+                fprintf(stdout, "Out of space at key %i\n", i);
+                exit(1);
+            }
+        }
+        thread->stats.AddBytes(bytes);
+        char msg[100];
+        snprintf(msg, sizeof(msg), "(write: %d) and (%d of %d found)", writes, found, reads);
+        thread->stats.AddMessage(msg);		
+	}
 };
 
 int main(int argc, char **argv) {
@@ -590,6 +652,7 @@ int main(int argc, char **argv) {
     // Parse command-line arguments
     for (int i = 1; i < argc; i++) {
         int n;
+		double r;
         char junk;
         if (leveldb::Slice(argv[i]).starts_with("--benchmarks=")) {
             FLAGS_benchmarks = argv[i] + strlen("--benchmarks=");
@@ -609,6 +672,8 @@ int main(int argc, char **argv) {
             FLAGS_db = argv[i] + 5;
         } else if (sscanf(argv[i], "--db_size_in_gb=%d%c", &n, &junk) == 1) {
             FLAGS_db_size_in_gb = n;
+		} else if (sscanf(argv[i], "--read_ratio=%lf%c", &r, &junk) == 1) {
+            FLAGS_read_ratio = r;
         } else {
             fprintf(stderr, "Invalid flag '%s'\n", argv[i]);
             exit(1);
