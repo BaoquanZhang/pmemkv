@@ -145,6 +145,7 @@ class PRun {
         size_t iter;
         size_t size;
         void get_range(KVRange& range);
+        int seek(const string& key);
 };
 
 /* MemTable: the write buffer in DRAM */
@@ -165,6 +166,38 @@ class MemTable {
         bool search(const string &key, string &val);
 };
 
+/* segment iterator */
+struct RunIndex {
+    persistent_ptr<PRun> pRun;
+    int index;
+    RunIndex(persistent_ptr<PRun> cur_run, int cur_index) {
+        pRun = cur_run;
+        index = cur_index;
+    };
+    RunIndex() {
+        pRun = NULL;
+        index = 0;
+    };
+    void display() {
+        cout << pRun->key_entry[index].key << endl;
+    }
+    inline char* const get_key() const {
+        return pRun->key_entry[index].key;
+    }
+    inline char* const get_val() const {
+        return pRun->key_entry[index].p_val;
+    }
+    bool const operator == (const RunIndex& runIndex) const {
+        return strncmp(get_key(), runIndex.get_key(), KEY_SIZE) == 0;
+    };
+    bool const operator < (const RunIndex& runIndex) const {
+        return strncmp(get_key(), runIndex.get_key(), KEY_SIZE) < 0;
+    };
+    bool const operator > (const RunIndex runIndex) const {
+        return strncmp(get_key(), runIndex.get_key(), KEY_SIZE) > 0;
+    };
+};
+
 /* Metadata table for sorted runs */
 class MetaTable {
     public:
@@ -174,6 +207,7 @@ class MetaTable {
         MetaTable();
         ~MetaTable();
         size_t getSize(); // get the size of ranges
+        map<KVRange, persistent_ptr<PRun>>::iterator seek(const string& key);
         bool add(vector<persistent_ptr<PRun>> runs);
         void add(persistent_ptr<PRun> run);
         bool del(persistent_ptr<PRun> runs);
@@ -206,6 +240,8 @@ class NVLsm : public KVEngine {
         size_t run_size;                                     // the number of kv pairs
         size_t layer_depth;
         size_t com_ratio;
+        vector<map<KVRange, persistent_ptr<PRun>>::iterator> iters;
+        map<RunIndex, int> search_stack;
         NVLsm(const string& path, const size_t size);        // default constructor
         ~NVLsm();                                          // default destructor
         // internal structure
@@ -231,6 +267,8 @@ class NVLsm : public KVEngine {
         KVStatus Put(const string& key,                        // copy value from std::string
                      const string& value) final;
         KVStatus Remove(const string& key) final;              // remove value for key
+        KVStatus Seek(const string& key) final;
+        KVStatus Next(string& key, string& value);
 };
 
 } // namespace nvlsm

@@ -82,6 +82,8 @@ void KVEngine::Close(KVEngine* kv) {
 
 KVStatus KVEngine::Seek(const string& key) {
 }
+KVStatus KVEngine::Stop_Seek() {
+}
 KVStatus KVEngine::Next(string& key, string& value) {
 }
 

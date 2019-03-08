@@ -39,7 +39,7 @@ class NVLsmTest : public testing::Test {
   public:
     NVLsm* kv;
 
-    NVLsmTest() { kv = new NVLsm(); }
+    NVLsmTest() { kv = new NVLsm("/mnt/pmem/nvlsm/nvlsm_test.pool", 10*1024*1024*1024); }
 
     ~NVLsmTest() {}
 };

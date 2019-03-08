@@ -223,6 +223,44 @@ KVStatus NVLsm::Put(const string& key, const string& value) {
     }
     return OK;
 }
+/* Seek to location*/
+KVStatus NVLsm::Seek(const string& key) {
+    cout << "start to seek " << endl;
+    for (int i = 0; i < meta_table.size(); i++) {
+        cout << "seeking comp " << i << endl;
+        RunIndex runIndex;
+        auto iter = meta_table[i].seek(key);
+        iters.push_back(iter);
+        runIndex.pRun = iter->second;
+        runIndex.index = iter->second->seek(key);
+        search_stack.emplace(runIndex, i);
+    }
+    cout << "seek done. Seaching stack size: " << search_stack.size() << endl;
+    return OK;
+}
+KVStatus NVLsm::Next(string& key, string& val) {
+    auto runIndex = search_stack.begin()->first;
+    auto index = search_stack.begin()->first.index;
+    auto comp = search_stack.begin()->second;
+    key.append(runIndex.get_key(), KEY_SIZE);
+    val.append(runIndex.get_val(), VAL_SIZE);
+    search_stack.erase(search_stack.begin());
+    index++;
+    if (index == runIndex.pRun->size) {
+        auto iter = iters[comp];
+        iter++;
+        if (iter != meta_table[comp].ranges.end()) {
+            runIndex.pRun = iter->second;
+            runIndex.index = 0;
+            search_stack.emplace(runIndex, comp);
+        }
+        iters[comp] = iter;
+    } else {
+        runIndex.index = index;
+        search_stack.emplace(runIndex, comp);
+    }
+    return OK;
+}
 
 KVStatus NVLsm::Remove(const string& key) {
     LOG("Remove key=" << key.c_str());
@@ -513,6 +551,15 @@ size_t MetaTable::getSize() {
     return ranges.size();
 }
 
+/* Seek to locations */
+map<KVRange, persistent_ptr<PRun>>::iterator MetaTable::seek(const string& key) {
+    KVRange kvrange(key, key);
+    auto it = ranges.lower_bound(kvrange);
+    while (it != ranges.begin() && it->first.start_key > key)
+        it--;
+    return it;
+}
+
 /* display: show the current elements */
 void MetaTable::display() {
     cout << ranges.size() << endl;
@@ -712,6 +759,25 @@ void PRun::get_range(KVRange& range) {
     range.start_key.assign(key_entry[0].key, KEY_SIZE);
     range.end_key.assign(key_entry[size - 1].key, KEY_SIZE);
     return;
+}
+/* seek to index */
+int PRun::seek(const string& key) {
+    int start = 0;
+    int end = size - 1;
+    int mid = 0;
+    while (start <= end) {
+        int mid = start + (end - start) / 2;
+        int res = strncmp(key_entry[mid].key, key.c_str(), KEY_SIZE);
+        if (res < 0) 
+            start = mid + 1;
+        else if (res > 0)
+            end = mid - 1;
+        else
+            break;
+    }
+    while (strncmp(key_entry[mid].key, key.c_str(), KEY_SIZE) >= 0)
+        mid--;
+    return mid;
 }
 /* #################### Implementations of Run ############################### */
 Run::Run() 

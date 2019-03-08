@@ -199,36 +199,71 @@ KVStatus NVLsm2::Remove(const string& key) {
 }
 
 KVStatus NVLsm2::Seek(const string& key) {
-    for (int i = 0; i < meta_table.size(); i++) {
+    //cout << "meta_table size " << meta_table.size() << endl;
+    search_stack.clear();
+    meta_table[0].wrlock();
+    meta_table[0].seq_seek(search_stack, key);
+    iters.resize(meta_table.size());
+    for (int i = 1; i < meta_table.size(); i++) {
+        meta_table[i].wrlock();
+        //cout << "seeking comp " << i << endl;
         auto iter = meta_table[i].seek(key.c_str());
+        //cout << "seeking done for comp " << i << endl;
         if (iter != meta_table[i].segRanges.end()) {
-            iters.push_back(iter);
+            iters[i] = iter;
             iter->second->seek(key.c_str());
-            RunIndex run_index;
-            iter->second->next(run_index);
-            search_stack.emplace(run_index, i);
+            //cout << "seek segment done" << endl;
+            RunIndex run_index; 
+            if (iter->second->next(run_index)) {
+                //cout << "got the first next" << endl;
+                run_index.pSeg = iter->second;
+                search_stack.emplace(run_index, i);
+                //cout << run_index.get_key() << endl;
+            }
         }
     }
+    //cout << "after seek the search stack: " << search_stack.size() << endl;
+    return OK;
+}
+
+KVStatus NVLsm2::Stop_Seek() {
+    for (int i = 0; i < meta_table.size(); i++)
+        meta_table[i].unlock();
     return OK;
 }
 
 KVStatus NVLsm2::Next(string& key, string& value) {
     if (search_stack.size() == 0)
         return NOT_FOUND;
+    //cout << "getting Next" << endl;
     auto run_index = search_stack.begin()->first;
     int comp = search_stack.begin()->second;
-    key.append(run_index.get_key(), KEY_SIZE);
-    value.append(run_index.get_val(), VAL_SIZE);
-    auto iter = iters[comp];
-    auto pSeg = iter->second;
-    search_stack.erase(run_index);
-    if (!pSeg->next(run_index)) {
-        iter++;
-        if (iter != meta_table[comp].segRanges.end()) {
-            pSeg = iter->second;
-            pSeg->seek(pSeg->get_key(pSeg->start));
-            pSeg->next(run_index);
-            search_stack.emplace(run_index, comp);
+    key.assign(run_index.get_key(), KEY_SIZE);
+    value.assign(run_index.get_val(), VAL_SIZE);
+    //cout << "assigned key and value, comp = " << comp << endl;
+    PSegment* pSeg = run_index.pSeg;
+    search_stack.erase(search_stack.begin());
+    //cout << "get key " << key << " from the search stack" << endl;
+    bool has_next = pSeg->next(run_index);
+    //cout << "get next key from current seg" << endl;
+    if (has_next) {
+        //cout << "go to next key in the same seg, index = " << run_index.index << endl;
+        run_index.pSeg = pSeg;
+        search_stack.emplace(run_index, comp);
+        //cout << "go to next key in the same seg done" << endl;
+    } else {
+        if (comp != 0) {
+            //cout << "go to next seg in comp " << comp << endl;
+            iters[comp]++;
+            if (iters[comp] != meta_table[comp].segRanges.end()) {
+                //cout << "comp " << comp << " has the next seg " << endl;
+                pSeg = iters[comp]->second;
+                pSeg->seek(pSeg->get_key(pSeg->start));
+                pSeg->next(run_index);
+                run_index.pSeg = pSeg;
+                search_stack.emplace(run_index, comp);
+            }
+            //cout << "go to next seg done" << endl;
         }
     }
     return OK;
@@ -687,10 +722,25 @@ void MetaTable::search(KVRange& kvRange, vector<PSegment*>& segs) {
     return;
 }
 
+/* add all segs to search_stack
+ * this will be only called for component 0 */
+void MetaTable::seq_seek(map<RunIndex, int>& search_stack, const string& key) {
+    for (auto it = segRanges.begin(); it != segRanges.end(); it++) {
+        RunIndex run_index;
+        it->second->seek(key.c_str());
+        it->second->next(run_index);
+        run_index.pSeg = it->second;
+        search_stack.emplace(run_index, 0);
+    }
+    return;
+}
 /* seek: it is for range query */
 map<KVRange, PSegment*>::iterator MetaTable::seek(const string& key) {
     KVRange kvrange(key, key);
-    return segRanges.lower_bound(kvrange);
+    auto iter = segRanges.lower_bound(kvrange);
+    while (iter != segRanges.begin() && iter->first.start_key > key)
+        iter--;
+    return iter;
 }
 
 /* build_layer: build a new layer using a seg */
@@ -932,7 +982,7 @@ PSegment::PSegment(vector<PSegment*> old_segs, persistent_ptr<PRun> run, size_t 
         depth += max_depth;
 }
 PSegment::~PSegment() {
-    for (auto run : pRuns) {
+    for (auto run : runSet) {
         KVRange range;
         run->get_range(range);
         run->refered--;
@@ -965,8 +1015,9 @@ void PSegment::addRuns(list<persistent_ptr<PRun>> runs) {
     return;
 }
 void PSegment::addRun(persistent_ptr<PRun> run) {
-    if (run) {
-        pRuns.push_front(run);
+    if (runSet.count(run) == 0 && isInclude(run)) {
+        runSet.emplace(run);
+        pRuns.push_back(run);
         run->refered++;
     }
     return;

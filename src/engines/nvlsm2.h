@@ -184,9 +184,15 @@ class PRun {
 struct RunIndex {
     persistent_ptr<PRun> pRun;
     int index;
+    PSegment* pSeg;
     RunIndex(persistent_ptr<PRun> cur_run, int cur_index) {
         pRun = cur_run;
         index = cur_index;
+    };
+    RunIndex(persistent_ptr<PRun> cur_run, PSegment* pSegment, int cur_index) {
+        pRun = cur_run;
+        index = cur_index;
+        pSeg = pSegment;
     };
     RunIndex() {
         pRun = NULL;
@@ -212,22 +218,15 @@ struct RunIndex {
     };
 };
 /* persistent segment in a PRun */
-struct Floor {
-    persistent_ptr<PRun> pRun;
-    size_t start;
-    size_t end;
-};
 class PSegment {
     public:
         /* variable */
         list<persistent_ptr<PRun>> pRuns; // included runs, the front() is the top
         set<persistent_ptr<PRun>> runSet; // all of the runs in a segment
-        vector<Floor> floors;
         size_t start;
         size_t end;
         int depth;
         int iter;
-        KVRange kvrange;
         map<RunIndex, int> search_stack;
         persistent_ptr<PRun> get_run(); // return the top run
         /* utilities */
@@ -274,6 +273,7 @@ class MetaTable {
         void search(KVRange& kvRange, vector<PSegment*>& segs);
         void build_layer(persistent_ptr<PRun> run);
         map<KVRange, PSegment*>::iterator seek(const string& key);
+        void seq_seek(map<RunIndex, int>& search_stack, const string& key);
         void do_build(vector<PSegment*>& overlap_segs, persistent_ptr<PRun> run);
         void build_link(persistent_ptr<PRun> src, int src_i, persistent_ptr<PRun> des, int des_i);
         void display();
@@ -317,6 +317,7 @@ class NVLsm2 : public KVEngine {
                      const string& value) final;
         KVStatus Remove(const string& key) final;              // remove value for key
         KVStatus Seek(const string& key) final;
+        KVStatus Stop_Seek() final;
         KVStatus Next(string& key, string& value) final;
 };
 

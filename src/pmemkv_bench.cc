@@ -53,7 +53,8 @@ static const string USAGE =
                 "--threads=<integer>        (number of concurrent threads, default: 1)\n"
                 "--value_size=<integer>     (size of values in bytes, default: 100)\n"
                 "--read_ratio=<double>,     (the ratio is [0,1])\n"
-		"--benchmarks=<name>,       (comma-separated list of benchmarks to run)\n"
+                "--range_len=<int>,         (the length of range querty, default: 64)\n"
+                "--benchmarks=<name>,       (comma-separated list of benchmarks to run)\n"
                 "    fillseq                (load N values in sequential key order into fresh db)\n"
                 "    fillrandom             (load N values in random key order into fresh db)\n"
                 "    overwrite              (replace N values in random key order)\n"
@@ -62,11 +63,12 @@ static const string USAGE =
                 "    readmissing            (read N missing values in random key order)\n"
                 "    deleteseq              (delete N values in sequential key order)\n"
                 "    deleterandom           (delete N values in random key order)\n"
-				"    readwrite           	(read and write N values in random key order follow the ratio)\n";
+                "    readwrite           	(read and write N values in random key order follow the ratio)\n"
+                "    seekrandom           	(Range query N times starting from a random key order)\n";
 
 // Default list of comma-separated operations to run
 static const char *FLAGS_benchmarks =
-        "fillrandom,overwrite,fillseq,readrandom,readseq,readrandom,readmissing,readrandom,deleteseq,readwrite";
+        "fillrandom,overwrite,fillseq,readrandom,readseq,readrandom,readmissing,readrandom,deleteseq,readwrite,seekrandom";
 
 // Default engine name
 static const char *FLAGS_engine = "kvtree";
@@ -94,6 +96,9 @@ static int FLAGS_db_size_in_gb = 1;
 
 // Use this ratio for readwrite benchmark to set read ratio
 static double FLAGS_read_ratio = 0.5;
+
+// Use this count to seek and next
+static int FLAGS_range_len = 64;
 
 using namespace leveldb;
 
@@ -268,6 +273,7 @@ private:
     int num_;
     int value_size_;
     int reads_;
+    int range_len_;
 
     void PrintHeader() {
         const int kKeySize = 16;
@@ -334,7 +340,8 @@ public:
             kv_(NULL),
             num_(FLAGS_num),
             value_size_(FLAGS_value_size),
-            reads_(FLAGS_reads < 0 ? FLAGS_num : FLAGS_reads) {
+            reads_(FLAGS_reads < 0 ? FLAGS_num : FLAGS_reads),
+            range_len_(FLAGS_range_len) {
     }
 
     ~Benchmark() {
@@ -385,6 +392,8 @@ public:
                 method = &Benchmark::DeleteRandom;
 			} else if (name == Slice("readwrite")) {
                 method = &Benchmark::ReadWrite;
+			} else if (name == Slice("seekrandom")) {
+                method = &Benchmark::SeekRandom;
             } else {
                 if (name != Slice()) {  // No error message for empty name
                     fprintf(stderr, "unknown benchmark '%s'\n", name.ToString().c_str());
@@ -590,42 +599,41 @@ private:
             snprintf(msg, sizeof(msg), "(%d ops)", num_);
             thread->stats.AddMessage(msg);
         }
-
-	if (FLAGS_read_ratio < 0 || FLAGS_read_ratio > 1) {
-	    char msg[100];
-	    snprintf(msg, sizeof(msg), "(%f read_ratio)", FLAGS_read_ratio);
-	    thread->stats.AddMessage(msg);
-	}
-	int mask = 1000;
-	int cut = floor(FLAGS_read_ratio * mask);
+        if (FLAGS_read_ratio < 0 || FLAGS_read_ratio > 1) {
+	        char msg[100];
+	        snprintf(msg, sizeof(msg), "(%f read_ratio)", FLAGS_read_ratio);
+	        thread->stats.AddMessage(msg);
+	    }
+        int mask = 1000;
+        int cut = floor(FLAGS_read_ratio * mask);
 
         KVStatus s;
         int64_t bytes = 0;
         int found = 0;
-	int reads = 0;
-	int writes = 0;
+        int reads = 0;
+        int writes = 0;
         for (int i = 0; i < num_; i++) {
-	    const int rd = thread->rand.Next();
-        const int k = rd % FLAGS_num;
-	    const int opt = rd % mask;
-        //if (i < 100)
-            //fprintf(stdout, "%d %d\n", k, opt);
+            const int rd = thread->rand.Next();
+            const int k = rd % FLAGS_num;
+            const int opt = rd % mask;
+            //if (i < 100)
+                //fprintf(stdout, "%d %d\n", k, opt);
             char key[100];
             snprintf(key, sizeof(key), "%016d", k);
-	    if (opt <= cut) {
-		reads++;
-	        string value;
-	        if (kv_->Get(key, &value) == OK) found++;
-	        thread->stats.FinishedSingleOp();
-	        bytes += value.length() + strlen(key);				
-	    } else {
-		writes++;
-            	string value = string();
-            	value.append(value_size_, 'X');
-            	s = kv_->Put(key, value);
-            	bytes += value_size_ + strlen(key);
-		thread->stats.FinishedSingleOp();
-	    }
+            if (opt <= cut) {
+                reads++;
+                string value;
+                if (kv_->Get(key, &value) == OK) found++;
+                thread->stats.FinishedSingleOp();
+                bytes += value.length() + strlen(key);				
+            } else {
+                writes++;
+                string value = string();
+                value.append(value_size_, 'X');
+                s = kv_->Put(key, value);
+                bytes += value_size_ + strlen(key);
+                thread->stats.FinishedSingleOp();
+            }
             if (s != OK) {
                 fprintf(stdout, "Out of space at key %i\n", i);
                 exit(1);
@@ -636,6 +644,31 @@ private:
         snprintf(msg, sizeof(msg), "(write: %d) and (%d of %d found)", writes, found, reads);
         thread->stats.AddMessage(msg);		
 	}
+
+    void SeekRandom(ThreadState *thread) {
+        KVStatus s;
+        int64_t bytes = 0;
+        int found = 0;
+        for (int i = 0; i < reads_; i++) {
+            const int k = thread->rand.Next() % FLAGS_num;
+            char key[100];
+            snprintf(key, sizeof(key), "%016d", k);
+            string next_key;
+            string next_value;
+            kv_->Seek(key);
+            for (int j = 0; j < range_len_; j++) {
+                if (kv_->Next(next_key, next_value) == OK) found++;
+                bytes += next_value.length() + next_key.length();
+            }
+            kv_->Stop_Seek();
+            thread->stats.FinishedSingleOp();
+        }
+        thread->stats.AddBytes(bytes);
+        char msg[100];
+        snprintf(msg, sizeof(msg), "(%d of %d found)", found, reads_);
+        thread->stats.AddMessage(msg);
+    }
+
 };
 
 int main(int argc, char **argv) {
@@ -674,6 +707,8 @@ int main(int argc, char **argv) {
             FLAGS_db_size_in_gb = n;
 		} else if (sscanf(argv[i], "--read_ratio=%lf%c", &r, &junk) == 1) {
             FLAGS_read_ratio = r;
+		} else if (sscanf(argv[i], "--range_len=%d%c", &n, &junk) == 1) {
+            FLAGS_range_len = n;
         } else {
             fprintf(stderr, "Invalid flag '%s'\n", argv[i]);
             exit(1);
