@@ -225,37 +225,56 @@ KVStatus NVLsm::Put(const string& key, const string& value) {
 }
 /* Seek to location*/
 KVStatus NVLsm::Seek(const string& key) {
-    cout << "start to seek " << endl;
-    for (int i = 0; i < meta_table.size(); i++) {
-        cout << "seeking comp " << i << endl;
+    //cout << "start to seek " << endl;
+    if (meta_table.size() == 0)
+        return OK;
+    search_stack.clear();
+    iters.resize(meta_table.size());
+    meta_table[0].seq_seek(key, search_stack);
+    for (int i = 1; i < meta_table.size(); i++) {
+        //cout << "seeking comp " << i << endl;
         RunIndex runIndex;
         auto iter = meta_table[i].seek(key);
-        iters.push_back(iter);
-        runIndex.pRun = iter->second;
-        runIndex.index = iter->second->seek(key);
-        search_stack.emplace(runIndex, i);
+        if (iter != meta_table[i].ranges.end()) {
+            iters[i] = iter;
+            runIndex.pRun = iter->second;
+            runIndex.index = iter->second->seek(key);
+            runIndex.range = iter;
+            search_stack.emplace(runIndex, i);
+        }
     }
-    cout << "seek done. Seaching stack size: " << search_stack.size() << endl;
+    //cout << "seek done. Seaching stack size: " << search_stack.size() << endl;
     return OK;
 }
 KVStatus NVLsm::Next(string& key, string& val) {
+    if (search_stack.size() == 0)
+        return OK;
     auto runIndex = search_stack.begin()->first;
     auto index = search_stack.begin()->first.index;
     auto comp = search_stack.begin()->second;
-    key.append(runIndex.get_key(), KEY_SIZE);
-    val.append(runIndex.get_val(), VAL_SIZE);
     search_stack.erase(search_stack.begin());
+    //cout << "get key from stack" << endl;
+    if (runIndex.pRun == NULL || runIndex.index >= runIndex.pRun->size)
+        return OK;
+    key.assign(runIndex.get_key(), KEY_SIZE);
+    val.assign(runIndex.get_val(), VAL_SIZE);
+    //cout << "index++" << endl;
     index++;
-    if (index == runIndex.pRun->size) {
-        auto iter = iters[comp];
-        iter++;
-        if (iter != meta_table[comp].ranges.end()) {
-            runIndex.pRun = iter->second;
-            runIndex.index = 0;
-            search_stack.emplace(runIndex, comp);
+    if (index >= runIndex.pRun->size) {
+        //cout << "go to next run" << endl;
+        if (comp != 0) {
+            auto iter = runIndex.range;
+            iter++;
+            if (iter != meta_table[comp].ranges.end()) {
+                runIndex.pRun = iter->second;
+                runIndex.index = 0;
+                runIndex.range = iter;
+                search_stack.emplace(runIndex, comp);
+            }
+            iters[comp] = iter;
         }
-        iters[comp] = iter;
     } else {
+        //cout << "stay in the same run" << endl;
         runIndex.index = index;
         search_stack.emplace(runIndex, comp);
     }
@@ -555,9 +574,21 @@ size_t MetaTable::getSize() {
 map<KVRange, persistent_ptr<PRun>>::iterator MetaTable::seek(const string& key) {
     KVRange kvrange(key, key);
     auto it = ranges.lower_bound(kvrange);
-    while (it != ranges.begin() && it->first.start_key > key)
+    while (it != ranges.end() && it != ranges.begin() && it->first.start_key > key)
         it--;
     return it;
+}
+/* put every run to search stack 
+ * this is only called for comp 0*/
+void MetaTable::seq_seek(const string& key, map<RunIndex, int>& search_stack) {
+    for (auto it = ranges.begin(); it != ranges.end(); it++) {
+        RunIndex runIndex;
+        runIndex.range = it;
+        runIndex.pRun = it->second;
+        runIndex.index = it->second->seek(key);
+        search_stack.emplace(runIndex, 0);
+    }
+    return;
 }
 
 /* display: show the current elements */

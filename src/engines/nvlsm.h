@@ -170,6 +170,7 @@ class MemTable {
 struct RunIndex {
     persistent_ptr<PRun> pRun;
     int index;
+    map<KVRange, persistent_ptr<PRun>>::iterator range;
     RunIndex(persistent_ptr<PRun> cur_run, int cur_index) {
         pRun = cur_run;
         index = cur_index;
@@ -208,6 +209,7 @@ class MetaTable {
         ~MetaTable();
         size_t getSize(); // get the size of ranges
         map<KVRange, persistent_ptr<PRun>>::iterator seek(const string& key);
+        void seq_seek(const string& key, map<RunIndex, int>& search_stack);
         bool add(vector<persistent_ptr<PRun>> runs);
         void add(persistent_ptr<PRun> run);
         bool del(persistent_ptr<PRun> runs);

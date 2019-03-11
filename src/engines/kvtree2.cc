@@ -167,6 +167,82 @@ KVStatus KVTree::Get(const string& key, string* value) {
     return NOT_FOUND;
 }
 
+/* sort leafnode and put it to search stack
+ * this is used for seek */
+void KVTree::sort_leaf(const string& start_key, persistent_ptr<KVLeaf> cur_leaf) {
+    if (cur_leaf == NULL)
+        return;
+    for (int i = LEAF_KEYS - 1; i >= 0; i--) {
+        //cout << i << endl;
+        auto cur_slot = cur_leaf->slots[i].get_rw();
+        if (cur_slot.empty())
+            continue;
+        //cout << "find an unempty slot, i = " << i << endl;
+        string key(cur_slot.key(), cur_slot.keysize());
+        //cout << "get the key" << endl;
+        if (start_key <= key) {
+            //cout << "a good key" << endl;
+            string val(cur_slot.val(), cur_slot.valsize());
+            search_stack.emplace(key, val);
+        }
+    }
+    //cout << "sort leaf done, search stack " << search_stack.size() << endl;
+    return;
+}
+void KVTree::sort_leaf(persistent_ptr<KVLeaf> cur_leaf) {
+    if (cur_leaf == NULL)
+        return;
+    for (int i = LEAF_KEYS - 1; i >= 0; i--) {
+        auto cur_slot = cur_leaf->slots[i].get_rw();
+        if (cur_slot.empty())
+            continue;
+        string key(cur_slot.key(), cur_slot.keysize());
+        string val(cur_slot.val(), cur_slot.valsize());
+        search_stack.emplace(key, val);
+    }
+    //cout << "sort leaf 2 done, search stack " << search_stack.size() << endl;
+    return;
+}
+
+KVStatus KVTree::Seek(const string& key) {
+    //LOG("Get for key=" << key.c_str());
+    search_stack.clear();
+    //cout << "seek start" << endl;
+    auto leafnode = LeafSearch(key);
+    //cout << "find the leaf node" << endl;
+    if (leafnode) {
+        leaf_iter = leafnode->leaf;
+        sort_leaf(key, leaf_iter);
+        return OK;
+    }
+    //cout << "seek done" << endl;
+    LOG("   could not find key");
+    return NOT_FOUND;
+} 
+
+KVStatus KVTree::Next(string& key, string& val) {
+    //cout << "start next" << endl;
+    if (leaf_iter == NULL)
+        return OK;
+    if (search_stack.size() == 0) {
+        //cout << " start to refill the search stack" << endl;
+        leaf_iter = leaf_iter->next;
+        //cout << " go to the next leaf " << endl;
+        if (leaf_iter) {
+            sort_leaf(leaf_iter);
+        }
+        //cout << "refill the search stack" << endl;
+    }
+    //cout << "get next key from stack" << endl;
+    if (search_stack.size() == 0)
+        return OK;
+    key.assign(search_stack.begin()->first);
+    val.assign(search_stack.begin()->second);
+    search_stack.erase(search_stack.begin());
+    //cout << "next done" << endl;
+    return OK;
+}
+
 KVStatus KVTree::Put(const string& key, const string& value) {
     LOG("Put key=" << key.c_str() << ", value.size=" << to_string(value.size()));
     /* baoquan add for ra */

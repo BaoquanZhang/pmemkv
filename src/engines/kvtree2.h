@@ -33,11 +33,13 @@
 #pragma once
 
 #include <vector>
+#include <map>
 #include "../pmemkv.h"
 
 using std::move;
 using std::unique_ptr;
 using std::vector;
+using namespace std;
 using pmem::obj::p;
 using pmem::obj::persistent_ptr;
 using pmem::obj::make_persistent;
@@ -150,7 +152,12 @@ class KVTree : public KVEngine {                           // hybrid B+ tree eng
     KVStatus Put(const string& key,                        // copy value from std::string
                  const string& value) final;
     KVStatus Remove(const string& key) final;              // remove value for key
-
+    KVStatus Seek(const string& key) final;
+    void sort_leaf(const string& key, persistent_ptr<KVLeaf> cur_leaf);
+    void sort_leaf(persistent_ptr<KVLeaf> cur_leaf);
+    KVStatus Next(string& key, string& value) final;
+    persistent_ptr<KVLeaf> leaf_iter;
+    map<string, string> search_stack;
     void Analyze(KVTreeAnalysis& analysis);                // report on internal state & stats
   protected:
     KVLeafNode* LeafSearch(const string& key);             // find node for key
