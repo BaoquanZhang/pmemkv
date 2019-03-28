@@ -738,7 +738,11 @@ void MetaTable::seq_seek(map<RunIndex, int>& search_stack, const string& key) {
 map<KVRange, PSegment*>::iterator MetaTable::seek(const string& key) {
     KVRange kvrange(key, key);
     auto iter = segRanges.lower_bound(kvrange);
-    while (iter != segRanges.begin() && iter->first.start_key > key)
+    if (iter == segRanges.end())
+        iter--;
+    while (iter !=segRanges.end()
+            && iter != segRanges.begin() 
+            && iter->first.start_key > key)
         iter--;
     return iter;
 }

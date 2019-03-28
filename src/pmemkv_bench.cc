@@ -64,11 +64,13 @@ static const string USAGE =
                 "    deleteseq              (delete N values in sequential key order)\n"
                 "    deleterandom           (delete N values in random key order)\n"
                 "    readwrite           	(read and write N values in random key order follow the ratio)\n"
+                "    workloade           	(ycsb workloade: 95% range, 5% write)\n"
+                "    workloadf           	(ycsb workloadf: 50% read, 50% read-modify-write)\n"
                 "    seekrandom           	(Range query N times starting from a random key order)\n";
 
 // Default list of comma-separated operations to run
 static const char *FLAGS_benchmarks =
-        "fillrandom,overwrite,fillseq,readrandom,readseq,readrandom,readmissing,readrandom,deleteseq,readwrite,seekrandom";
+        "fillrandom,overwrite,fillseq,readrandom,readseq,readrandom,readmissing,readrandom,deleteseq,readwrite,seekrandom,workloade,workloadf";
 
 // Default engine name
 static const char *FLAGS_engine = "kvtree";
@@ -657,8 +659,10 @@ private:
             string next_value;
             kv_->Seek(key);
             for (int j = 0; j < range_len_; j++) {
-                if (kv_->Next(next_key, next_value) == OK) found++;
-                bytes += next_value.length() + next_key.length();
+                if (kv_->Next(next_key, next_value) == OK) {
+                    found++;
+                    bytes += next_value.length() + next_key.length();
+                }
             }
             kv_->Stop_Seek();
             thread->stats.FinishedSingleOp();
