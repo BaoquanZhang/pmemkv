@@ -36,6 +36,8 @@
 #define DO_LOG 0
 #define LOG(msg) if (DO_LOG) std::cout << "[nvlsm] " << msg << "\n"
 
+#define AMP
+
 namespace pmemkv {
 namespace nvlsm2 {
 
@@ -85,7 +87,7 @@ static void persist(void * v_nvlsm) {
     runs.push_back(p_run);
     nvlsm->compact(0, runs);
     //cout << "after building new layers: " << endl;
-    nvlsm->display();
+    //nvlsm->display();
     //cout << "persist stop" << endl;
 }
 /* ######################## Log #########################################*/
@@ -546,7 +548,7 @@ inline void MetaTable::copy_kv(persistent_ptr<PRun> des_run, int des_i,
     des_entry[des_i].p_val = &des_vals[des_i * VAL_SIZE];
 #ifdef AMP
     write_count++;
-    if (write_count >= write_unit * 10000000) {
+    if (write_count >= write_unit * 1000000) {
         cout << "write_count: " << write_count << endl;
         write_unit++;
     }

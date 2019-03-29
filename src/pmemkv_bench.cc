@@ -63,9 +63,13 @@ static const string USAGE =
                 "    readmissing            (read N missing values in random key order)\n"
                 "    deleteseq              (delete N values in sequential key order)\n"
                 "    deleterandom           (delete N values in random key order)\n"
-                "    readwrite           	(read and write N values in random key order follow the ratio)\n"
+                "    workloada           	(ycsb workloada: 50% read, 50% write)\n"
+                "    workloadb           	(ycsb workloadb: 95% read, 5% write)\n"
+                "    workloadc           	(ycsb workloadc: 100% read)\n"
+                "    workloadd           	(ycsb workloadd: 95% read, 5% write)\n"
                 "    workloade           	(ycsb workloade: 95% range, 5% write)\n"
                 "    workloadf           	(ycsb workloadf: 50% read, 50% read-modify-write)\n"
+                "    readwrite           	(read and write N values in random key order follow the ratio)\n"
                 "    seekrandom           	(Range query N times starting from a random key order)\n";
 
 // Default list of comma-separated operations to run
@@ -396,6 +400,18 @@ public:
                 method = &Benchmark::ReadWrite;
 			} else if (name == Slice("seekrandom")) {
                 method = &Benchmark::SeekRandom;
+			} else if (name == Slice("workloada")) {
+                method = &Benchmark::WorkloadA;
+			} else if (name == Slice("workloadb")) {
+                method = &Benchmark::WorkloadB;
+			} else if (name == Slice("workloadc")) {
+                method = &Benchmark::WorkloadC;
+			} else if (name == Slice("workloadd")) {
+                method = &Benchmark::WorkloadD;
+			} else if (name == Slice("workloade")) {
+                method = &Benchmark::WorkloadE;
+			} else if (name == Slice("workloadf")) {
+                method = &Benchmark::WorkloadF;
             } else {
                 if (name != Slice()) {  // No error message for empty name
                     fprintf(stderr, "unknown benchmark '%s'\n", name.ToString().c_str());
@@ -647,6 +663,239 @@ private:
         thread->stats.AddMessage(msg);		
 	}
 
+    void WorkloadA(ThreadState *thread) {
+        if (num_ != FLAGS_num) {
+            char msg[100];
+            snprintf(msg, sizeof(msg), "(%d ops)", num_);
+            thread->stats.AddMessage(msg);
+        }
+        FLAGS_read_ratio = 0.5;
+        FLAGS_reads = 10000000;
+        if (FLAGS_read_ratio < 0 || FLAGS_read_ratio > 1) {
+	        char msg[100];
+	        snprintf(msg, sizeof(msg), "(%f read_ratio)", FLAGS_read_ratio);
+	        thread->stats.AddMessage(msg);
+	    }
+        int mask = 1000;
+        int cut = floor(FLAGS_read_ratio * mask);
+
+        KVStatus s;
+        int64_t bytes = 0;
+        int found = 0;
+        int reads = 0;
+        int writes = 0;
+        for (int i = 0; i < FLAGS_reads; i++) {
+            const int rd = thread->rand.Next();
+            const int k = rd % FLAGS_num;
+            const int opt = rd % mask;
+            //if (i < 100)
+                //fprintf(stdout, "%d %d\n", k, opt);
+            char key[100];
+            snprintf(key, sizeof(key), "%016d", k);
+            if (opt <= cut) {
+                reads++;
+                string value;
+                if (kv_->Get(key, &value) == OK) found++;
+                thread->stats.FinishedSingleOp();
+                bytes += value.length() + strlen(key);				
+            } else {
+                writes++;
+                string value = string();
+                value.append(value_size_, 'X');
+                s = kv_->Put(key, value);
+                bytes += value_size_ + strlen(key);
+                thread->stats.FinishedSingleOp();
+            }
+            if (s != OK) {
+                fprintf(stdout, "Out of space at key %i\n", i);
+                exit(1);
+            }
+        }
+        thread->stats.AddBytes(bytes);
+        char msg[100];
+        snprintf(msg, sizeof(msg), "(write: %d) and (%d of %d found)", writes, found, reads);
+        thread->stats.AddMessage(msg);		
+	}
+
+    void WorkloadB(ThreadState *thread) {
+        if (num_ != FLAGS_num) {
+            char msg[100];
+            snprintf(msg, sizeof(msg), "(%d ops)", num_);
+            thread->stats.AddMessage(msg);
+        }
+        FLAGS_read_ratio = 0.95;
+        FLAGS_reads = 10000000;
+        if (FLAGS_read_ratio < 0 || FLAGS_read_ratio > 1) {
+	        char msg[100];
+	        snprintf(msg, sizeof(msg), "(%f read_ratio)", FLAGS_read_ratio);
+	        thread->stats.AddMessage(msg);
+	    }
+        int mask = 1000;
+        int cut = floor(FLAGS_read_ratio * mask);
+
+        KVStatus s;
+        int64_t bytes = 0;
+        int found = 0;
+        int reads = 0;
+        int writes = 0;
+        for (int i = 0; i < FLAGS_reads; i++) {
+            const int rd = thread->rand.Next();
+            const int k = rd % FLAGS_num;
+            const int opt = rd % mask;
+            //if (i < 100)
+                //fprintf(stdout, "%d %d\n", k, opt);
+            char key[100];
+            snprintf(key, sizeof(key), "%016d", k);
+            if (opt <= cut) {
+                reads++;
+                string value;
+                if (kv_->Get(key, &value) == OK) found++;
+                thread->stats.FinishedSingleOp();
+                bytes += value.length() + strlen(key);				
+            } else {
+                writes++;
+                string value = string();
+                value.append(value_size_, 'X');
+                s = kv_->Put(key, value);
+                bytes += value_size_ + strlen(key);
+                thread->stats.FinishedSingleOp();
+            }
+            if (s != OK) {
+                fprintf(stdout, "Out of space at key %i\n", i);
+                exit(1);
+            }
+        }
+        thread->stats.AddBytes(bytes);
+        char msg[100];
+        snprintf(msg, sizeof(msg), "(write: %d) and (%d of %d found)", writes, found, reads);
+        thread->stats.AddMessage(msg);		
+	}
+
+    void WorkloadC(ThreadState *thread) {
+        FLAGS_reads = 10000000;
+        ReadRandom(thread);
+    }
+
+    void WorkloadD(ThreadState *thread) {
+        WorkloadB(thread);
+    }
+
+    void WorkloadE(ThreadState *thread)  {
+        if (num_ != FLAGS_num) {
+            char msg[100];
+            snprintf(msg, sizeof(msg), "(%d ops)", num_);
+            thread->stats.AddMessage(msg);
+        }
+
+        FLAGS_read_ratio = 0.95;
+        FLAGS_reads = 1000000;
+
+        if (FLAGS_read_ratio < 0 || FLAGS_read_ratio > 1) {
+	        char msg[100];
+	        snprintf(msg, sizeof(msg), "(%f read_ratio)", FLAGS_read_ratio);
+	        thread->stats.AddMessage(msg);
+	    }
+        int mask = 1000;
+        int cut = floor(FLAGS_read_ratio * mask);
+
+        KVStatus s;
+        int64_t bytes = 0;
+        int found = 0;
+        int reads = 0;
+        int writes = 0;
+        for (int i = 0; i < FLAGS_reads; i++) {
+            const int rd = thread->rand.Next();
+            const int k = rd % FLAGS_num;
+            const int opt = rd % mask;
+            //if (i < 100)
+                //fprintf(stdout, "%d %d\n", k, opt);
+            char key[100];
+            snprintf(key, sizeof(key), "%016d", k);
+            if (opt <= cut) {
+                reads++;
+                string next_key;
+                string next_value;
+                kv_->Seek(key);
+                for (int j = 0; j < range_len_; j++) {
+                    if (kv_->Next(next_key, next_value) == OK) found++;
+                    bytes += next_value.length() + next_key.length();
+                }
+                kv_->Stop_Seek();
+                thread->stats.FinishedSingleOp();
+            } else {
+                writes++;
+                string value = string();
+                value.append(value_size_, 'X');
+                s = kv_->Put(key, value);
+                bytes += value_size_ + strlen(key);
+                thread->stats.FinishedSingleOp();
+            }
+            if (s != OK) {
+                fprintf(stdout, "Out of space at key %i\n", i);
+                exit(1);
+            }
+        }
+        thread->stats.AddBytes(bytes);
+        char msg[100];
+        snprintf(msg, sizeof(msg), "(write: %d) and (%d of %d found)", writes, found, reads);
+        thread->stats.AddMessage(msg);		
+	}
+
+    void WorkloadF(ThreadState *thread)  {
+        if (num_ != FLAGS_num) {
+            char msg[100];
+            snprintf(msg, sizeof(msg), "(%d ops)", num_);
+            thread->stats.AddMessage(msg);
+        }
+        FLAGS_read_ratio = 0.5;
+        FLAGS_reads = 10000000;
+        if (FLAGS_read_ratio < 0 || FLAGS_read_ratio > 1) {
+	        char msg[100];
+	        snprintf(msg, sizeof(msg), "(%f read_ratio)", FLAGS_read_ratio);
+	        thread->stats.AddMessage(msg);
+	    }
+        int mask = 1000;
+        int cut = floor(FLAGS_read_ratio * mask);
+
+        KVStatus s;
+        int64_t bytes = 0;
+        int found = 0;
+        int reads = 0;
+        int writes = 0;
+        for (int i = 0; i < FLAGS_reads; i++) {
+            const int rd = thread->rand.Next();
+            const int k = rd % FLAGS_num;
+            const int opt = rd % mask;
+            //if (i < 100)
+                //fprintf(stdout, "%d %d\n", k, opt);
+            char key[100];
+            snprintf(key, sizeof(key), "%016d", k);
+            if (opt <= cut) {
+                reads++;
+                string value;
+                if (kv_->Get(key, &value) == OK) found++;
+                thread->stats.FinishedSingleOp();
+                bytes += value.length() + strlen(key);				
+            } else {
+                writes++;
+                string old_value;
+                s = kv_->Get(key, &old_value);
+                string value = string();
+                value.append(value_size_, 'X');
+                s = kv_->Put(key, value);
+                bytes += value_size_ + strlen(key);
+                thread->stats.FinishedSingleOp();
+            }
+            if (s != OK) {
+                fprintf(stdout, "Out of space at key %i\n", i);
+                exit(1);
+            }
+        }
+        thread->stats.AddBytes(bytes);
+        char msg[100];
+        snprintf(msg, sizeof(msg), "(write: %d) and (%d of %d found)", writes, found, reads);
+        thread->stats.AddMessage(msg);		
+	}
     void SeekRandom(ThreadState *thread) {
         KVStatus s;
         int64_t bytes = 0;

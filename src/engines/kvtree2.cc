@@ -426,11 +426,11 @@ void KVTree::LeafSplitFull(KVLeafNode* leafnode, const uint8_t hash,
         for (int slot = LEAF_KEYS; slot--;) {
             if (strcmp(leafnode->keys[slot].c_str(), split_key.data()) > 0) {
                 /* baoquan modified to copy data */
-                //new_leaf->slots[slot].swap(leafnode->leaf->slots[slot]);
-                new_leaf->slots[slot].get_rw().set(
-                        leafnode->hashes[slot],
-                        leafnode->keys[slot],
-                        leafnode->leaf->slots[slot].get_rw().val());
+                new_leaf->slots[slot].swap(leafnode->leaf->slots[slot]);
+                //new_leaf->slots[slot].get_rw().set(
+                //        leafnode->hashes[slot],
+                //        leafnode->keys[slot],
+                //        leafnode->leaf->slots[slot].get_rw().val());
                 write_count++;
                 /* baoquan mldified to copy data end */
                 new_leafnode->hashes[slot] = leafnode->hashes[slot];

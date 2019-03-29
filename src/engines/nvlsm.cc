@@ -41,6 +41,11 @@ namespace nvlsm {
 
 pool<LSM_Root> pmpool;
 size_t pmsize;
+long long write_count = 0;
+long long write_unit = 1;
+long long read_count = 0;
+long long read_unit = 1;
+long long count_unit = 10000000;
 /* #####################static functions for multiple threads ####################### */
 /* persist: persist a mem_table to c0
  * v_nvlsm: an instance of nvlsm
@@ -61,6 +66,13 @@ static void persist(void * v_nvlsm) {
     auto key_entry = p_run->key_entry;
     auto vals = p_run->vals;
     for (auto it = run->kv.begin(); it != run->kv.end(); it++) {
+#ifdef AMP
+        write_count++;
+        if (write_count > write_unit * count_unit) {
+            write_unit++;
+            cout << "write_count: " << write_count << "times" << endl;
+        }
+#endif
         strncpy(key_entry[i].key, it->first.c_str(), KEY_SIZE);
         strncpy(&vals[i * VAL_SIZE], it->second.c_str(), it->second.size());
         key_entry[i].val_len = it->second.size();
@@ -421,6 +433,18 @@ void NVLsm::merge_sort(CompactionUnit * unit) {
         int low_len = low_run->size;
         //cout << "merging step1.5" << endl;
         while (low_index < low_len) {
+#ifdef AMP
+            write_count++;
+            if (write_count > write_unit * count_unit) {
+                write_unit++;
+                cout << "write_count: " << write_count << "times" << endl;
+            }
+            read_count++;
+            if (read_count > read_unit * count_unit) {
+                read_unit++;
+                cout << "read_count: " << read_count << "times" << endl;
+            }
+#endif
             if (up_index < up_len) {
                 /* if up run has kv pairs */
                 auto up_key = up_run->key_entry[up_index].key;
@@ -729,6 +753,13 @@ bool MetaTable::search(const string &key, string &val) {
         int end = run->size - 1;
         auto key_entry = run->key_entry;
         while (start <= end) {
+#ifdef AMP
+            read_count++;
+            if (read_count > read_unit * count_unit) {
+                read_unit++;
+                cout << "write_count: " << read_count << "times" << endl;
+            }
+#endif
             int mid = start + (end - start) / 2;
             int res = strncmp(key.c_str(), key_entry[mid].key, KEY_SIZE);
             if (res == 0) {
